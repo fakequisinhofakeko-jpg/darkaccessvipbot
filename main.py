@@ -1,4 +1,5 @@
 import os
+import uuid
 import requests
 from telegram import (
     Update,
@@ -56,21 +57,28 @@ async def mostrar_planos(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # =========================
 def criar_pix(valor, descricao):
     url = "https://api.mercadopago.com/v1/payments"
+
     headers = {
         "Authorization": f"Bearer {MP_ACCESS_TOKEN}",
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
+        "X-Idempotency-Key": str(uuid.uuid4())
     }
 
     data = {
-        "transaction_amount": valor,
+        "transaction_amount": float(valor),
         "description": descricao,
         "payment_method_id": "pix",
         "payer": {
-            "email": "cliente@telegram.com"
+            "email": "comprador@telegram.com"
         }
     }
 
     response = requests.post(url, json=data, headers=headers)
+
+    if response.status_code not in [200, 201]:
+        print("❌ ERRO MERCADO PAGO:", response.text)
+        return None
+
     return response.json()
 
 # =========================
@@ -94,24 +102,25 @@ async def callback_planos(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     pagamento = criar_pix(valor, plano)
 
-    try:
-        pix_copia_cola = pagamento["point_of_interaction"]["transaction_data"]["qr_code"]
+    if not pagamento:
+        await query.message.reply_text(
+            "❌ *Erro ao gerar o Pix.*\n"
+            "Pagamento não autorizado pelo Mercado Pago.",
+            parse_mode="Markdown"
+        )
+        return
 
-        await query.message.reply_text(
-            f"💳 *Pagamento PIX*\n\n"
-            f"📌 Plano: {plano}\n"
-            f"💰 Valor: R${valor}\n\n"
-            f"🔑 *Pix Copia e Cola:*\n"
-            f"`{pix_copia_cola}`\n\n"
-            f"⚠️ Após pagar, aguarde a confirmação.",
-            parse_mode="Markdown"
-        )
-    except:
-        await query.message.reply_text(
-            "❌ Erro ao gerar o Pix.\n"
-            "Verifique se o *MP_ACCESS_TOKEN* está correto.",
-            parse_mode="Markdown"
-        )
+    pix_copia_cola = pagamento["point_of_interaction"]["transaction_data"]["qr_code"]
+
+    await query.message.reply_text(
+        f"💳 *Pagamento PIX*\n\n"
+        f"📌 Plano: {plano}\n"
+        f"💰 Valor: R${valor}\n\n"
+        f"🔑 *Pix Copia e Cola:*\n"
+        f"`{pix_copia_cola}`\n\n"
+        f"⚠️ Após pagar, aguarde a confirmação.",
+        parse_mode="Markdown"
+    )
 
 # =========================
 # CALLBACK MENU GERAL
@@ -134,8 +143,8 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text(
             "❓ *Ajuda*\n\n"
             "• Escolha um plano\n"
-            "• Pague via Pix\n"
-            "• Aguarde a liberação\n\n"
+            "• Gere o Pix\n"
+            "• Pague e aguarde a liberação\n\n"
             "Suporte automático.",
             parse_mode="Markdown"
         )
