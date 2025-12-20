@@ -21,9 +21,10 @@ async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
 
     if query.data == "planos":
-        keyboard = [
-            [InlineKeyboardButton("💎 VIP Mensal - R$29,90", callback_data="vip_mensal")],
-            [InlineKeyboardButton("🔥 VIP Trimestral - R$79,90", callback_data="vip_tri")]
+        teclado = [
+    [InlineKeyboardButton("💎 1 Mês - R$24,90", callback_data="vip_1m")],
+    [InlineKeyboardButton("🔥 3 Meses - R$64,90", callback_data="vip_3m")],
+    [InlineKeyboardButton("👑 Vitalício - R$149,90", callback_data="vip_vitalicio")]
         ]
         await query.edit_message_text(
             "📌 *Escolha seu plano:*",
