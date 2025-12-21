@@ -5,7 +5,7 @@ from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
 
-# ================= CONFIG SEGURA =================
+# ================= CONFIG =================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 MP_ACCESS_TOKEN = os.getenv("MP_ACCESS_TOKEN")
 ADMIN_ID_RAW = os.getenv("ADMIN_ID")
@@ -143,18 +143,13 @@ async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
 
-# ================= MAIN =================
-async def main():
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
+# ================= BOOT =================
+app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("admin", admin))
-    app.add_handler(CallbackQueryHandler(show_plans, pattern="^plans$"))
-    app.add_handler(CallbackQueryHandler(buy, pattern="^buy_"))
+app.add_handler(CommandHandler("start", start))
+app.add_handler(CommandHandler("admin", admin))
+app.add_handler(CallbackQueryHandler(show_plans, pattern="^plans$"))
+app.add_handler(CallbackQueryHandler(buy, pattern="^buy_"))
 
-    print("🤖 Bot iniciado com sucesso")
-    await app.run_polling()
-
-if __name__ == "__main__":
-    import asyncio
-    asyncio.run(main())
+print("🤖 Bot iniciado com sucesso")
+app.run_polling()
