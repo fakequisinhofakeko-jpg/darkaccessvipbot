@@ -3,6 +3,7 @@ import uuid
 import asyncio
 import sqlite3
 import requests
+from functools import partial
 from datetime import datetime, timedelta
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -13,25 +14,17 @@ from telegram.ext import (
     ContextTypes
 )
 
-# ================== CONFIG SAFE ==================
+# ================== CONFIG ==================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 MP_ACCESS_TOKEN = os.getenv("MP_ACCESS_TOKEN")
-GROUP_ID_RAW = os.getenv("GROUP_ID")
-ADMIN_ID_RAW = os.getenv("ADMIN_ID")
+GROUP_ID = int(os.getenv("GROUP_ID", "0"))
+ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 
-if not BOT_TOKEN:
-    raise RuntimeError("BOT_TOKEN não definido")
-
-if not GROUP_ID_RAW or not ADMIN_ID_RAW:
-    raise RuntimeError("GROUP_ID ou ADMIN_ID não definidos")
-
-GROUP_ID = int(GROUP_ID_RAW)
-ADMIN_ID = int(ADMIN_ID_RAW)
+if not BOT_TOKEN or not MP_ACCESS_TOKEN or not GROUP_ID or not ADMIN_ID:
+    raise RuntimeError("❌ Variáveis de ambiente obrigatórias não definidas")
 
 MP_API = "https://api.mercadopago.com/v1/payments"
 DB_FILE = "database.db"
-
-print("✅ Variáveis carregadas")
 
 # ================== PLANOS ==================
 PLANS = {
@@ -117,8 +110,8 @@ async def show_plans(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
 
-# ================== MERCADO PAGO ==================
-def criar_pix(plan_key, user_id):
+# ================== MERCADO PAGO (SAFE ASYNC) ==================
+def _criar_pix_sync(plan_key, user_id):
     plan = PLANS[plan_key]
 
     headers = {
@@ -137,7 +130,15 @@ def criar_pix(plan_key, user_id):
         }
     }
 
-    return requests.post(MP_API, headers=headers, json=data, timeout=20).json()
+    r = requests.post(MP_API, headers=headers, json=data, timeout=20)
+    return r.json()
+
+async def criar_pix(plan_key, user_id):
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(
+        None,
+        partial(_criar_pix_sync, plan_key, user_id)
+    )
 
 # ================== COMPRAR ==================
 async def buy_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -150,20 +151,19 @@ async def buy_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
     existing = get_user(user_id)
     if existing and existing[0] == "vip_vitalicio":
         await q.edit_message_text(
-            "👑 *Você já possui VIP Vitalício.*",
+            "👑 *Você já possui VIP Vitalício.*\n\nAcesso permanente.",
             parse_mode="Markdown"
         )
         return
 
-    pix = criar_pix(plan_key, user_id)
-
     try:
+        pix = await criar_pix(plan_key, user_id)
         data = pix["point_of_interaction"]["transaction_data"]
         pix_code = data["qr_code"]
         checkout = data.get("ticket_url")
         payment_id = pix["id"]
     except Exception:
-        await q.edit_message_text("❌ Erro ao gerar pagamento.")
+        await q.edit_message_text("❌ Erro ao gerar pagamento. Tente novamente.")
         return
 
     context.user_data["payment_id"] = payment_id
@@ -183,7 +183,7 @@ async def buy_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
 
-# ================== VERIFICAR ==================
+# ================== VERIFICAR PAGAMENTO ==================
 async def check_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
@@ -191,11 +191,19 @@ async def check_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
     payment_id = context.user_data.get("payment_id")
     plan_key = context.user_data.get("plan")
 
-    r = requests.get(
-        f"{MP_API}/{payment_id}",
-        headers={"Authorization": f"Bearer {MP_ACCESS_TOKEN}"},
-        timeout=15
-    ).json()
+    if not payment_id or not plan_key:
+        await q.edit_message_text("❌ Sessão expirada. Gere o pagamento novamente.")
+        return
+
+    try:
+        r = requests.get(
+            f"{MP_API}/{payment_id}",
+            headers={"Authorization": f"Bearer {MP_ACCESS_TOKEN}"},
+            timeout=15
+        ).json()
+    except Exception:
+        await q.edit_message_text("⚠️ Erro ao consultar pagamento.")
+        return
 
     if r.get("status") == "approved":
         plan = PLANS[plan_key]
@@ -207,7 +215,7 @@ async def check_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
         save_user(q.from_user.id, plan_key, expires)
         log_payment(q.from_user.id, q.from_user.username, plan["name"], plan["price"])
 
-        invite = await context.bot.create_chat_invite_link(GROUP_ID, member_limit=1)
+        invite = await q.bot.create_chat_invite_link(GROUP_ID, member_limit=1)
 
         await q.edit_message_text(
             "✅ *Pagamento aprovado!*\n\n"
@@ -217,8 +225,8 @@ async def check_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await q.edit_message_text("⏳ Pagamento ainda não aprovado.")
 
-# ================== EXPIRAÇÃO ==================
-async def expiration_loop(application):
+# ================== EXPIRAÇÃO AUTOMÁTICA ==================
+async def expiration_loop(app):
     while True:
         await asyncio.sleep(300)
         now = datetime.now()
@@ -227,12 +235,12 @@ async def expiration_loop(application):
         for user_id, expires in cursor.fetchall():
             if datetime.fromisoformat(expires) <= now:
                 try:
-                    await application.bot.ban_chat_member(GROUP_ID, user_id)
-                    await application.bot.unban_chat_member(GROUP_ID, user_id)
+                    await app.bot.ban_chat_member(GROUP_ID, user_id)
+                    await app.bot.unban_chat_member(GROUP_ID, user_id)
                 except:
                     pass
                 remove_user(user_id)
-                
+
 # ================== ADMIN ==================
 async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
@@ -247,26 +255,60 @@ async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "👑 *Painel Admin*",
         reply_markup=InlineKeyboardMarkup(kb),
         parse_mode="Markdown"
-    )                
+    )
 
-# ================== POST INIT ==================
-async def post_init(application):
-    application.create_task(expiration_loop(application))
-    print("⏳ Expiração automática ativa")
+async def admin_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+
+    cursor.execute("SELECT user_id, plan, expires_at FROM users")
+    rows = cursor.fetchall()
+
+    if not rows:
+        await q.edit_message_text("Nenhum usuário ativo.")
+        return
+
+    text = "👥 *Usuários VIP:*\n\n"
+    for uid, plan, exp in rows:
+        exp_txt = "Vitalício" if not exp else datetime.fromisoformat(exp).strftime("%d/%m/%Y")
+        text += f"🆔 {uid} — {plan} — {exp_txt}\n"
+
+    await q.edit_message_text(text, parse_mode="Markdown")
+
+async def admin_logs(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+
+    cursor.execute("SELECT user_id, plan, value, date FROM logs ORDER BY id DESC LIMIT 10")
+    rows = cursor.fetchall()
+
+    if not rows:
+        await q.edit_message_text("Nenhum pagamento registrado.")
+        return
+
+    text = "🧾 *Últimos pagamentos:*\n\n"
+    for uid, plan, value, date in rows:
+        text += f"👤 {uid}\n💳 {plan} — R${value}\n📅 {date}\n\n"
+
+    await q.edit_message_text(text, parse_mode="Markdown")
 
 # ================== MAIN ==================
-def main():
-    app = ApplicationBuilder().token(BOT_TOKEN).post_init(post_init).build()
+async def main():
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
-app.add_handler(CommandHandler("admin", admin))
+    app.add_handler(CommandHandler("admin", admin))
 
-app.add_handler(CallbackQueryHandler(show_plans, pattern="^plans$"))
-app.add_handler(CallbackQueryHandler(buy_plan, pattern="^buy_"))
-app.add_handler(CallbackQueryHandler(check_payment, pattern="^check_"))
+    app.add_handler(CallbackQueryHandler(show_plans, pattern="^plans$"))
+    app.add_handler(CallbackQueryHandler(buy_plan, pattern="^buy_"))
+    app.add_handler(CallbackQueryHandler(check_payment, pattern="^check_payment$"))
+    app.add_handler(CallbackQueryHandler(admin_users, pattern="^admin_users$"))
+    app.add_handler(CallbackQueryHandler(admin_logs, pattern="^admin_logs$"))
 
-app.add_handler(CallbackQueryHandler(admin_users, pattern="^admin_users$"))
-app.add_handler(CallbackQueryHandler(admin_logs, pattern="^admin_logs$"))
+    asyncio.create_task(expiration_loop(app))
+
+    print("🤖 Bot iniciado com sucesso")
+    await app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
