@@ -1,7 +1,5 @@
-import asyncio
 import os
 import asyncio
-import requests
 from datetime import datetime, timedelta
 
 from telegram import (
@@ -15,176 +13,155 @@ from telegram.ext import (
     CallbackQueryHandler,
     ContextTypes
 )
-async def verificador_automatico(app):
-    while True:
-        await asyncio.sleep(60)  # verifica a cada 1 minuto
 
-        for user_id, info in list(pagamentos.items()):
-            if info["status"] == "pending":
-                dados = verificar_pagamento(info["payment_id"])
+import mercadopago
 
-                if dados.get("status") == "approved":
-                    info["status"] = "approved"
-                    expira = datetime.now() + timedelta(days=info["dias"])
-
-                    try:
-                        await app.bot.unban_chat_member(GROUP_ID, user_id)
-                        await app.bot.send_message(
-                            chat_id=user_id,
-                            text=(
-                                "✅ *Pagamento aprovado automaticamente!*\n\n"
-                                f"📌 Plano: {info['plano']}\n"
-                                f"⏰ Expira em: {expira.strftime('%d/%m/%Y')}"
-                            ),
-                            parse_mode="Markdown"
-                        )
-                    except Exception as e:
-                        print("Erro ao liberar acesso:", e)
+# =========================
+# VARIÁVEIS DE AMBIENTE
+# =========================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 GROUP_ID = int(os.getenv("GROUP_ID"))
 MP_ACCESS_TOKEN = os.getenv("MP_ACCESS_TOKEN")
 
+# =========================
+# MERCADO PAGO
+# =========================
+mp = mercadopago.SDK(MP_ACCESS_TOKEN)
+
+# =========================
+# DADOS EM MEMÓRIA
+# =========================
 pagamentos = {}
 
-# ================= START =================
+# =========================
+# START
+# =========================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    teclado = [
-        [InlineKeyboardButton("📌 Planos", callback_data="planos")],
-        [InlineKeyboardButton("❓ Ajuda", callback_data="ajuda")]
-    ]
     await update.message.reply_text(
-        "🔥 *Dark Access VIP*\n\nEscolha uma opção:",
-        reply_markup=InlineKeyboardMarkup(teclado),
-        parse_mode="Markdown"
+        "🤖 Bot online com sucesso!\n\n"
+        "Use /planos para ver os planos disponíveis."
     )
 
-# ================= PLANOS =================
+# =========================
+# PLANOS
+# =========================
 async def planos(update: Update, context: ContextTypes.DEFAULT_TYPE):
     teclado = [
-        [InlineKeyboardButton("💎 1 Mês - R$24,90", callback_data="vip_1m")],
-        [InlineKeyboardButton("🔥 3 Meses - R$64,90", callback_data="vip_3m")],
-        [InlineKeyboardButton("👑 Vitalício - R$149,90", callback_data="vip_vip")]
+        [InlineKeyboardButton("💎 VIP 1 Mês - R$24,90", callback_data="vip_1m")]
     ]
-    await update.callback_query.message.reply_text(
+
+    await update.message.reply_text(
         "📌 Escolha seu plano:",
         reply_markup=InlineKeyboardMarkup(teclado)
     )
 
-# ================= PIX =================
-def criar_pix(valor, descricao):
-    url = "https://api.mercadopago.com/v1/payments"
-    headers = {
-        "Authorization": f"Bearer {MP_ACCESS_TOKEN}",
-        "Content-Type": "application/json"
-    }
-    data = {
-        "transaction_amount": valor,
-        "description": descricao,
-        "payment_method_id": "pix",
-        "payer": {"email": "cliente@vip.com"}
-    }
-    r = requests.post(url, json=data, headers=headers)
-    return r.json()
+# =========================
+# GERAR PIX
+# =========================
+async def callback_planos(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
 
-async def gerar_pix(update: Update, plano, valor, dias):
-    user_id = update.callback_query.from_user.id
-    pagamento = criar_pix(valor, plano)
+    user_id = query.from_user.id
+
+    pagamento = mp.payment().create({
+        "transaction_amount": 24.90,
+        "description": "VIP 1 Mês",
+        "payment_method_id": "pix",
+        "payer": {
+            "email": f"user{user_id}@telegram.com"
+        }
+    })
+
+    pix = pagamento["response"]["point_of_interaction"]["transaction_data"]
 
     pagamentos[user_id] = {
-        "payment_id": pagamento["id"],
-        "plano": plano,
-        "valor": valor,
-        "dias": dias,
-        "status": "pending"
+        "payment_id": pagamento["response"]["id"],
+        "plano": "VIP 1 Mês",
+        "status": "pending",
+        "expira_em": None
     }
 
-    texto = (
-        f"💳 *Pagamento PIX*\n\n"
-        f"📌 Plano: {plano}\n"
-        f"💰 Valor: R${valor}\n\n"
-        f"`{pagamento['point_of_interaction']['transaction_data']['qr_code']}`"
-    )
-
-    teclado = [
-        [InlineKeyboardButton("🔄 Verificar pagamento", callback_data="verificar")]
-    ]
-
-    await update.callback_query.message.reply_text(
-        texto,
-        parse_mode="Markdown",
-        reply_markup=InlineKeyboardMarkup(teclado)
-    )
-
-# ================= VERIFICAR PAGAMENTO =================
-def verificar_pagamento(payment_id):
-    url = f"https://api.mercadopago.com/v1/payments/{payment_id}"
-    headers = {"Authorization": f"Bearer {MP_ACCESS_TOKEN}"}
-    return requests.get(url, headers=headers).json()
-
-async def verificar(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.callback_query.from_user.id
-
-    if user_id not in pagamentos:
-        await update.callback_query.message.reply_text("❌ Nenhum pagamento encontrado.")
-        return
-
-    info = pagamentos[user_id]
-    dados = verificar_pagamento(info["payment_id"])
-
-    if dados["status"] == "approved":
-        await liberar_acesso(update, context, info)
-    else:
-        await update.callback_query.message.reply_text(
-            "⏳ Pagamento ainda não aprovado.\nStatus: pending"
-        )
-
-# ================= LIBERAR ACESSO =================
-async def liberar_acesso(update, context, info):
-    user_id = update.callback_query.from_user.id
-    expira = datetime.now() + timedelta(days=info["dias"])
-
-    await context.bot.unban_chat_member(GROUP_ID, user_id)
-
-    await update.callback_query.message.reply_text(
-        f"✅ *Pagamento aprovado!*\n\n"
-        f"📌 Plano: {info['plano']}\n"
-        f"⏰ Expira em: {expira.strftime('%d/%m/%Y')}",
+    await query.message.reply_text(
+        f"💠 *Pagamento via PIX*\n\n"
+        f"🔢 *Copia e Cola:*\n`{pix['qr_code']}`\n\n"
+        "⏳ Após pagar, aguarde a confirmação automática.",
         parse_mode="Markdown"
     )
 
-# ================= CALLBACKS =================
-async def callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    data = update.callback_query.data
+# =========================
+# VERIFICADOR DE PAGAMENTO
+# =========================
+async def verificador_pagamento(app):
+    while True:
+        await asyncio.sleep(30)
 
-    if data == "planos":
-        await planos(update, context)
+        for user_id, info in list(pagamentos.items()):
+            if info["status"] != "pending":
+                continue
 
-    elif data == "vip_1m":
-        await gerar_pix(update, "VIP 1 Mês", 24.9, 30)
+            payment_id = info["payment_id"]
+            status = mp.payment().get(payment_id)["response"]["status"]
 
-    elif data == "vip_3m":
-        await gerar_pix(update, "VIP 3 Meses", 64.9, 90)
+            if status == "approved":
+                expira = datetime.now() + timedelta(days=30)
 
-    elif data == "vip_vip":
-        await gerar_pix(update, "VIP Vitalício", 149.9, 3650)
+                pagamentos[user_id]["status"] = "approved"
+                pagamentos[user_id]["expira_em"] = expira
 
-    elif data == "verificar":
-        await verificar(update, context)
+                await app.bot.send_message(
+                    chat_id=user_id,
+                    text="✅ Pagamento aprovado!\nVocê foi liberado no grupo VIP."
+                )
 
-# ================= MAIN =================
-app = ApplicationBuilder().token(BOT_TOKEN).build()
+                try:
+                    await app.bot.unban_chat_member(GROUP_ID, user_id)
+                    await app.bot.invite_chat_member(GROUP_ID, user_id)
+                except:
+                    pass
 
-app.add_handler(CommandHandler("start", start))
-app.add_handler(CallbackQueryHandler(callbacks))
+# =========================
+# VERIFICADOR DE EXPIRAÇÃO
+# =========================
+async def verificador_expiracao(app):
+    while True:
+        await asyncio.sleep(60)
 
-print("🤖 Bot online com sucesso!")
-app.run_polling()
-app = ApplicationBuilder().token(BOT_TOKEN).build()
+        agora = datetime.now()
 
-app.add_handler(CommandHandler("start", start))
-app.add_handler(CallbackQueryHandler(callbacks))
+        for user_id, info in list(pagamentos.items()):
+            expira = info.get("expira_em")
 
-app.create_task(verificador_automatico(app))
+            if expira and agora > expira:
+                try:
+                    await app.bot.ban_chat_member(GROUP_ID, user_id)
+                    await app.bot.unban_chat_member(GROUP_ID, user_id)
 
-print("🤖 Bot online com verificação automática!")
-app.run_polling()
+                    await app.bot.send_message(
+                        chat_id=user_id,
+                        text="⛔ Seu acesso VIP expirou.\nRenove para continuar."
+                    )
+
+                    del pagamentos[user_id]
+
+                except:
+                    pass
+
+# =========================
+# MAIN
+# =========================
+async def main():
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
+
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("planos", planos))
+    app.add_handler(CallbackQueryHandler(callback_planos))
+
+    app.create_task(verificador_pagamento(app))
+    app.create_task(verificador_expiracao(app))
+
+    print("Bot iniciado")
+    await app.run_polling()
+
+if __name__ == "__main__":
+    asyncio.run(main())
