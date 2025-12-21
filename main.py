@@ -1,245 +1,197 @@
-import os
-import uuid
-import asyncio
-import requests
-from datetime import datetime, timedelta
+import os, json, uuid, requests
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
 
-from telegram import (
-    Update,
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
-    ChatMemberUpdated,
-)
-from telegram.ext import (
-    ApplicationBuilder,
-    CommandHandler,
-    CallbackQueryHandler,
-    ContextTypes,
-    ChatMemberHandler,
-)
-
-# ================== VARIÁVEIS DE AMBIENTE ==================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 GROUP_ID = int(os.getenv("GROUP_ID"))
+ADMIN_ID = int(os.getenv("ADMIN_ID"))
 MP_ACCESS_TOKEN = os.getenv("MP_ACCESS_TOKEN")
 
-# ================== PLANOS ==================
-PLANS = {
-    "vip_1": {"name": "VIP 1 Mês", "price": 24.90, "days": 30},
-    "vip_3": {"name": "VIP 3 Meses", "price": 64.90, "days": 90},
-    "vip_vitalicio": {"name": "VIP Vitalício", "price": 149.90, "days": None},
+CHECKOUT_LINKS = {
+    "vip_1": os.getenv("CHECKOUT_VIP1"),
+    "vip_3": os.getenv("CHECKOUT_VIP3"),
+    "vip_vitalicio": os.getenv("CHECKOUT_VIPVIT"),
 }
 
-# ================== START ==================
+PLANS = {
+    "vip_1": {"name": "VIP 1 Mês", "price": 24.90},
+    "vip_3": {"name": "VIP 3 Meses", "price": 64.90},
+    "vip_vitalicio": {"name": "VIP Vitalício", "price": 149.90},
+}
+
+DATA_FILE = "users.json"
+
+def load_users():
+    if not os.path.exists(DATA_FILE):
+        return {}
+    with open(DATA_FILE, "r") as f:
+        return json.load(f)
+
+def save_users(data):
+    with open(DATA_FILE, "w") as f:
+        json.dump(data, f)
+
+USERS = load_users()
+
+# ================= START =================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [[InlineKeyboardButton("📌 Ver planos", callback_data="plans")]]
+    kb = [[InlineKeyboardButton("🔥 Ver planos VIP", callback_data="plans")]]
     await update.message.reply_text(
-        "🔥 *Dark Access VIP*\n\nEscolha uma opção:",
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode="Markdown",
+        "🚨 ACESSO VIP EXCLUSIVO\n\n"
+        "🔒 Conteúdo fechado\n"
+        "⚡ Liberação automática\n\n"
+        "👇 Clique abaixo:",
+        reply_markup=InlineKeyboardMarkup(kb)
     )
 
-# ================== PLANOS ==================
+# ================= PLANOS =================
 async def show_plans(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
+    q = update.callback_query
+    await q.answer()
 
-    keyboard = [
-        [InlineKeyboardButton("💎 VIP 1 Mês – R$24,90", callback_data="buy_vip_1")],
-        [InlineKeyboardButton("🔥 VIP 3 Meses – R$64,90", callback_data="buy_vip_3")],
-        [InlineKeyboardButton("👑 VIP Vitalício – R$149,90", callback_data="buy_vip_vitalicio")],
-    ]
+    user_id = str(q.from_user.id)
+    plano_atual = USERS.get(user_id)
 
-    await query.edit_message_text(
-        "📌 *Escolha seu plano:*",
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode="Markdown",
+    kb = []
+
+    if plano_atual != "vip_vitalicio":
+        if plano_atual is None:
+            kb.append([InlineKeyboardButton("VIP 1 Mês – R$24,90", callback_data="buy_vip_1")])
+            kb.append([InlineKeyboardButton("VIP 3 Meses – R$64,90", callback_data="buy_vip_3")])
+
+        kb.append([InlineKeyboardButton("VIP Vitalício – R$149,90", callback_data="buy_vip_vitalicio")])
+
+    await q.edit_message_text(
+        "💎 Escolha seu plano VIP:",
+        reply_markup=InlineKeyboardMarkup(kb)
     )
 
-# ================== CRIAR PIX ==================
-def create_pix(plan_key: str, user_id: int):
-    plan = PLANS[plan_key]
-
+# ================= PAGAMENTO PIX =================
+def criar_pix(plano, user_id):
     headers = {
         "Authorization": f"Bearer {MP_ACCESS_TOKEN}",
-        "Content-Type": "application/json",
-        "X-Idempotency-Key": str(uuid.uuid4()),
+        "Content-Type": "application/json"
     }
-
     data = {
-        "transaction_amount": float(plan["price"]),
-        "description": plan["name"],
+        "transaction_amount": PLANS[plano]["price"],
+        "description": PLANS[plano]["name"],
         "payment_method_id": "pix",
-        "external_reference": f"user_{user_id}_{plan_key}",
-        "payer": {"email": f"user{user_id}@darkaccessvip.com"},
+        "payer": {"email": f"user{user_id}@vip.com"}
     }
+    r = requests.post("https://api.mercadopago.com/v1/payments", headers=headers, json=data)
+    return r.json()
 
-    response = requests.post(
-        "https://api.mercadopago.com/v1/payments",
-        headers=headers,
-        json=data,
-        timeout=15,
-    )
-
-    return response.json()
-
-# ================== COMPRAR ==================
+# ================= COMPRAR =================
 async def buy_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
+    q = update.callback_query
+    await q.answer()
 
-    plan_key = query.data.replace("buy_", "")
-    plan = PLANS[plan_key]
+    plano = q.data.replace("buy_", "")
+    user_id = str(q.from_user.id)
 
-    payment = create_pix(plan_key, query.from_user.id)
+    if USERS.get(user_id) == "vip_vitalicio":
+        await q.edit_message_text("❌ Você já possui VIP Vitalício.")
+        return
+
+    pix = criar_pix(plano, user_id)
 
     try:
-        pix_code = payment["point_of_interaction"]["transaction_data"]["qr_code"]
-        payment_id = payment["id"]
-    except Exception:
-        await query.edit_message_text(
-            "❌ *Erro ao gerar o PIX.*\nTente novamente.",
-            parse_mode="Markdown",
-        )
+        pix_code = pix["point_of_interaction"]["transaction_data"]["qr_code"]
+        payment_id = pix["id"]
+    except:
+        await q.edit_message_text("❌ Erro ao gerar PIX.")
         return
 
     context.user_data["payment_id"] = payment_id
-    context.user_data["plan"] = plan_key
+    context.user_data["plan"] = plano
 
-    keyboard = [
+    kb = [
+        [InlineKeyboardButton("💳 Pagar com cartão", url=CHECKOUT_LINKS[plano])],
         [InlineKeyboardButton("🔄 Verificar pagamento", callback_data="check_payment")]
     ]
 
-    await query.edit_message_text(
-        f"💳 *Pagamento PIX*\n\n"
-        f"📌 Plano: {plan['name']}\n"
-        f"💰 Valor: R${plan['price']}\n\n"
-        f"🔑 *Pix Copia e Cola:*\n"
-        f"`{pix_code}`\n\n"
-        f"Após pagar, clique em *Verificar pagamento*.",
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode="Markdown",
+    await q.edit_message_text(
+        f"💳 Pagamento VIP\n\n"
+        f"Plano: {PLANS[plano]['name']}\n"
+        f"Valor: R${PLANS[plano]['price']}\n\n"
+        f"PIX Copia e Cola:\n{pix_code}",
+        reply_markup=InlineKeyboardMarkup(kb)
     )
 
-# ================== VERIFICAR PAGAMENTO ==================
+# ================= VERIFICAR =================
 async def check_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
+    q = update.callback_query
+    await q.answer()
 
     payment_id = context.user_data.get("payment_id")
-    plan_key = context.user_data.get("plan")
+    plano = context.user_data.get("plan")
+    user_id = str(q.from_user.id)
 
-    if not payment_id:
-        await query.edit_message_text("❌ Nenhum pagamento encontrado.")
-        return
-
-    response = requests.get(
+    r = requests.get(
         f"https://api.mercadopago.com/v1/payments/{payment_id}",
-        headers={"Authorization": f"Bearer {MP_ACCESS_TOKEN}"},
-        timeout=15,
+        headers={"Authorization": f"Bearer {MP_ACCESS_TOKEN}"}
     ).json()
 
-    if response.get("status") == "approved":
-        plan = PLANS[plan_key]
+    if r.get("status") == "approved":
+        invite = await context.bot.create_chat_invite_link(GROUP_ID, member_limit=1)
+        USERS[user_id] = plano
+        save_users(USERS)
 
-        expires_at = (
-            datetime.now() + timedelta(days=plan["days"])
-            if plan["days"]
-            else None
-        )
-
-        users = context.application.bot_data.setdefault("users", {})
-        users[query.from_user.id] = {
-            "expires": expires_at,
-            "warned": False,
-        }
-
-        invite = await context.bot.create_chat_invite_link(
-            chat_id=GROUP_ID,
-            member_limit=1,
-        )
-
-        await query.edit_message_text(
-            "✅ *Pagamento aprovado!*\n\n"
-            f"🔓 Entre no grupo VIP:\n{invite.invite_link}",
-            parse_mode="Markdown",
+        await q.edit_message_text(
+            f"✅ Pagamento aprovado!\n\n"
+            f"Acesso VIP:\n{invite.invite_link}"
         )
     else:
-        await query.edit_message_text(
-            "⏳ Pagamento ainda não aprovado.\nTente novamente."
-        )
+        await q.edit_message_text("⏳ Pagamento ainda não aprovado.")
 
-# ================== BOAS-VINDAS ==================
-async def welcome(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if (
-        update.chat_member.new_chat_member
-        and update.chat_member.new_chat_member.status == "member"
-    ):
-        user = update.chat_member.new_chat_member.user
-        await context.bot.send_message(
-            chat_id=update.chat_member.chat.id,
-            text=(
-                f"👑 Bem-vindo ao *Dark Access VIP*, {user.first_name}!\n\n"
-                "⚠️ Regras:\n"
-                "• Conteúdo individual\n"
-                "• Proibido repassar\n\n"
-                "🔥 Aproveite!"
-            ),
-            parse_mode="Markdown",
-        )
-
-# ================== EXPIRAÇÃO + AVISO ==================
-async def expiration_checker(app):
-    while True:
-        await asyncio.sleep(300)
-        now = datetime.now()
-        users = app.bot_data.get("users", {})
-
-        for user_id, data in list(users.items()):
-            expires = data.get("expires")
-            if not expires:
-                continue
-
-            # aviso 24h
-            if not data.get("warned") and 0 < (expires - now).total_seconds() <= 86400:
-                try:
-                    await app.bot.send_message(
-                        chat_id=user_id,
-                        text="⏰ *Seu acesso VIP expira em menos de 24h!*",
-                        parse_mode="Markdown",
-                    )
-                    data["warned"] = True
-                except:
-                    pass
-
-            # expiração
-            if now >= expires:
-                try:
-                    await app.bot.ban_chat_member(GROUP_ID, user_id)
-                    await asyncio.sleep(1)
-                    await app.bot.unban_chat_member(GROUP_ID, user_id)
-                    del users[user_id]
-                except:
-                    pass
-
-# ================== START LOOP CORRETO ==================
-async def post_init(app):
-    app.create_task(expiration_checker(app))
-
-# ================== MAIN ==================
-def main():
-    app = (
-        ApplicationBuilder()
-        .token(BOT_TOKEN)
-        .post_init(post_init)
-        .build()
+# ================= ADMIN =================
+async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+    await update.message.reply_text(
+        f"👑 Painel Admin\n\n"
+        f"/usuarios – listar\n"
+        f"/remover ID – remover usuário"
     )
 
+async def usuarios(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+    if not USERS:
+        await update.message.reply_text("Nenhum usuário ativo.")
+        return
+
+    msg = "Usuários VIP:\n\n"
+    for u, p in USERS.items():
+        msg += f"{u} — {p}\n"
+
+    await update.message.reply_text(msg)
+
+async def remover(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+    try:
+        uid = context.args[0]
+        await context.bot.ban_chat_member(GROUP_ID, int(uid))
+        await context.bot.unban_chat_member(GROUP_ID, int(uid))
+        USERS.pop(uid, None)
+        save_users(USERS)
+        await update.message.reply_text("Usuário removido.")
+    except:
+        await update.message.reply_text("Uso correto: /remover ID")
+
+# ================= MAIN =================
+def main():
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
+
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("admin", admin))
+    app.add_handler(CommandHandler("usuarios", usuarios))
+    app.add_handler(CommandHandler("remover", remover))
+
     app.add_handler(CallbackQueryHandler(show_plans, pattern="^plans$"))
     app.add_handler(CallbackQueryHandler(buy_plan, pattern="^buy_"))
     app.add_handler(CallbackQueryHandler(check_payment, pattern="^check_payment$"))
-    app.add_handler(ChatMemberHandler(welcome, ChatMemberHandler.CHAT_MEMBER))
 
     app.run_polling()
 
