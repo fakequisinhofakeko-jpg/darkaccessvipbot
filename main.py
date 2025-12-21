@@ -1,6 +1,9 @@
 import os
 import uuid
+import asyncio
 import requests
+from datetime import datetime, timedelta
+
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
@@ -14,10 +17,11 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 GROUP_ID = int(os.getenv("GROUP_ID"))
 MP_ACCESS_TOKEN = os.getenv("MP_ACCESS_TOKEN")
 
+# ================== PLANOS ==================
 PLANS = {
-    "vip_1": {"name": "VIP 1 Mês", "price": 24.90},
-    "vip_3": {"name": "VIP 3 Meses", "price": 64.90},
-    "vip_vitalicio": {"name": "VIP Vitalício", "price": 149.90},
+    "vip_1": {"name": "VIP 1 Mês", "price": 24.90, "days": 30},
+    "vip_3": {"name": "VIP 3 Meses", "price": 64.90, "days": 90},
+    "vip_vitalicio": {"name": "VIP Vitalício", "price": 149.90, "days": None},
 }
 
 # ================== START ==================
@@ -50,27 +54,31 @@ async def show_plans(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def create_pix(plan_key, user_id):
     plan = PLANS[plan_key]
 
-    url = "https://api.mercadopago.com/v1/payments"
-
     headers = {
         "Authorization": f"Bearer {MP_ACCESS_TOKEN}",
         "Content-Type": "application/json",
-        "X-Idempotency-Key": str(uuid.uuid4())  # 🔥 ESSENCIAL
+        "X-Idempotency-Key": str(uuid.uuid4())
     }
 
     data = {
         "transaction_amount": float(plan["price"]),
         "description": plan["name"],
         "payment_method_id": "pix",
+        "external_reference": f"user_{user_id}_{plan_key}",
         "payer": {
             "email": f"user{user_id}@darkaccessvip.com"
         }
     }
 
-    response = requests.post(url, headers=headers, json=data)
+    response = requests.post(
+        "https://api.mercadopago.com/v1/payments",
+        headers=headers,
+        json=data
+    )
+
     result = response.json()
 
-    if response.status_code != 201:
+    if response.status_code not in (200, 201):
         print("❌ ERRO MERCADO PAGO:", result)
 
     return result
@@ -123,11 +131,26 @@ async def check_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("❌ Nenhum pagamento encontrado.")
         return
 
-    url = f"https://api.mercadopago.com/v1/payments/{payment_id}"
-    headers = {"Authorization": f"Bearer {MP_ACCESS_TOKEN}"}
-    response = requests.get(url, headers=headers).json()
+    response = requests.get(
+        f"https://api.mercadopago.com/v1/payments/{payment_id}",
+        headers={"Authorization": f"Bearer {MP_ACCESS_TOKEN}"}
+    ).json()
 
     if response.get("status") == "approved":
+        plan = PLANS[plan_key]
+
+        # calcula expiração
+        expires_at = (
+            datetime.now() + timedelta(days=plan["days"])
+            if plan["days"] else None
+        )
+
+        # salva usuário
+        context.application.bot_data.setdefault("users", {})
+        context.application.bot_data["users"][query.from_user.id] = {
+            "expires": expires_at
+        }
+
         invite = await context.bot.create_chat_invite_link(
             chat_id=GROUP_ID,
             member_limit=1
@@ -135,14 +158,30 @@ async def check_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await query.edit_message_text(
             "✅ *Pagamento aprovado!*\n\n"
-            "🔓 Acesso liberado:\n"
-            f"{invite.invite_link}",
+            f"🔓 Entre no grupo VIP:\n{invite.invite_link}",
             parse_mode="Markdown"
         )
     else:
         await query.edit_message_text(
             "⏳ Pagamento ainda não aprovado.\nTente novamente."
         )
+
+# ================== EXPIRAÇÃO AUTOMÁTICA ==================
+async def expiration_checker(app):
+    while True:
+        await asyncio.sleep(300)  # 5 minutos
+        now = datetime.now()
+
+        users = app.bot_data.get("users", {})
+        for user_id, data in list(users.items()):
+            expires = data["expires"]
+            if expires and now >= expires:
+                try:
+                    await app.bot.ban_chat_member(GROUP_ID, user_id)
+                    await app.bot.unban_chat_member(GROUP_ID, user_id)
+                    del users[user_id]
+                except Exception as e:
+                    print("Erro ao remover usuário:", e)
 
 # ================== MAIN ==================
 def main():
@@ -152,6 +191,8 @@ def main():
     app.add_handler(CallbackQueryHandler(show_plans, pattern="^plans$"))
     app.add_handler(CallbackQueryHandler(buy_plan, pattern="^buy_"))
     app.add_handler(CallbackQueryHandler(check_payment, pattern="^check_payment$"))
+
+    app.create_task(expiration_checker(app))
 
     app.run_polling()
 
