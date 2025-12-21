@@ -2,205 +2,93 @@ import os
 import uuid
 import requests
 from datetime import datetime, timedelta
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import (
-    ApplicationBuilder,
-    CommandHandler,
-    CallbackQueryHandler,
-    ContextTypes
-)
+from fastapi import FastAPI, Request, Header
+from telegram import Bot
+from telegram.ext import ApplicationBuilder, CommandHandler
+import threading
+import uvicorn
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 MP_ACCESS_TOKEN = os.getenv("MP_ACCESS_TOKEN")
+WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET")
 GRUPO_VIP_ID = -1003513694224
 
-pagamentos = {}  # user_id -> dados
+bot = Bot(BOT_TOKEN)
+app = FastAPI()
+
+# memória simples (etapa 5 vira banco)
+pagamentos = {}
 
 # ======================
-# START
+# BOT START
 # ======================
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    teclado = [
-        [InlineKeyboardButton("📌 Planos", callback_data="menu_planos")],
-        [InlineKeyboardButton("❓ Ajuda", callback_data="menu_ajuda")]
-    ]
+async def start(update, context):
     await update.message.reply_text(
-        "🔥 *Dark Access VIP*\n\nEscolha uma opção:",
-        reply_markup=InlineKeyboardMarkup(teclado),
-        parse_mode="Markdown"
+        "🔥 Dark Access VIP\n\n"
+        "Escolha um plano e pague.\n"
+        "O acesso é liberado automaticamente."
     )
 
 # ======================
-# PLANOS
+# WEBHOOK MERCADO PAGO
 # ======================
-async def mostrar_planos(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    teclado = [
-        [InlineKeyboardButton("💎 1 Mês - R$24,90", callback_data="vip_1m")],
-        [InlineKeyboardButton("🔥 3 Meses - R$64,90", callback_data="vip_3m")],
-        [InlineKeyboardButton("👑 Vitalício - R$149,90", callback_data="vip_vitalicio")]
-    ]
-    await update.callback_query.message.reply_text(
-        "📌 *Escolha seu plano:*",
-        reply_markup=InlineKeyboardMarkup(teclado),
-        parse_mode="Markdown"
-    )
+@app.post("/webhook")
+async def mercado_pago_webhook(
+    request: Request,
+    x_signature: str = Header(None)
+):
+    data = await request.json()
 
-# ======================
-# CRIAR PIX
-# ======================
-def criar_pix(valor, descricao):
-    headers = {
-        "Authorization": f"Bearer {MP_ACCESS_TOKEN}",
-        "X-Idempotency-Key": str(uuid.uuid4()),
-        "Content-Type": "application/json"
-    }
-    data = {
-        "transaction_amount": valor,
-        "description": descricao,
-        "payment_method_id": "pix",
-        "payer": {"email": "cliente@telegram.com"}
-    }
-    r = requests.post("https://api.mercadopago.com/v1/payments", json=data, headers=headers)
-    return r.json()
+    if x_signature != WEBHOOK_SECRET:
+        return {"error": "unauthorized"}
 
-# ======================
-# CALLBACK PLANOS
-# ======================
-async def callback_planos(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
+    if data.get("type") != "payment":
+        return {"status": "ignored"}
 
-    planos = {
-        "vip_1m": (24.90, "VIP 1 Mês", 30),
-        "vip_3m": (64.90, "VIP 3 Meses", 90),
-        "vip_vitalicio": (149.90, "VIP Vitalício", 3650)
-    }
-
-    valor, nome, dias = planos[query.data]
-    pagamento = criar_pix(valor, nome)
-
-    user_id = query.from_user.id
-
-    pagamentos[user_id] = {
-        "plano": nome,
-        "valor": valor,
-        "dias": dias,
-        "payment_id": pagamento["id"],
-        "status": "pending",
-        "expira": None
-    }
-
-    pix = pagamento["point_of_interaction"]["transaction_data"]["qr_code"]
-
-    teclado = [[InlineKeyboardButton("🔄 Verificar pagamento", callback_data="verificar_pagamento")]]
-
-    await query.message.reply_text(
-        f"💳 *Pagamento PIX*\n\n"
-        f"📌 Plano: {nome}\n"
-        f"💰 Valor: R${valor}\n\n"
-        f"`{pix}`",
-        reply_markup=InlineKeyboardMarkup(teclado),
-        parse_mode="Markdown"
-    )
-
-# ======================
-# VERIFICAR PAGAMENTO REAL
-# ======================
-async def verificar_pagamento(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-
-    user_id = query.from_user.id
-    pagamento = pagamentos.get(user_id)
-
-    if not pagamento:
-        await query.message.reply_text("❌ Nenhum pagamento encontrado.")
-        return
+    payment_id = data["data"]["id"]
 
     headers = {"Authorization": f"Bearer {MP_ACCESS_TOKEN}"}
-    r = requests.get(
-        f"https://api.mercadopago.com/v1/payments/{pagamento['payment_id']}",
+    payment = requests.get(
+        f"https://api.mercadopago.com/v1/payments/{payment_id}",
         headers=headers
     ).json()
 
-    status = r.get("status")
+    if payment.get("status") != "approved":
+        return {"status": "pending"}
 
-    if status != "approved":
-        await query.message.reply_text(
-            f"⏳ Pagamento ainda não aprovado.\nStatus: `{status}`",
-            parse_mode="Markdown"
-        )
-        return
+    external_reference = payment.get("external_reference")
+    if not external_reference:
+        return {"error": "no user"}
 
-    pagamento["status"] = "approved"
-    pagamento["expira"] = datetime.now() + timedelta(days=pagamento["dias"])
+    user_id = int(external_reference)
 
-    link = await context.bot.create_chat_invite_link(
+    link = await bot.create_chat_invite_link(
         chat_id=GRUPO_VIP_ID,
         member_limit=1
     )
 
-    await query.message.reply_text(
-        f"✅ *Pagamento aprovado!*\n\n"
-        f"🔓 Link de acesso:\n{link.invite_link}\n\n"
-        f"⏳ Válido até: {pagamento['expira'].strftime('%d/%m/%Y')}",
+    await bot.send_message(
+        chat_id=user_id,
+        text=(
+            "✅ *Pagamento aprovado!*\n\n"
+            f"🔓 Link de acesso:\n{link.invite_link}"
+        ),
         parse_mode="Markdown"
     )
 
-# ======================
-# STATUS
-# ======================
-async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    pagamento = pagamentos.get(user_id)
-
-    if not pagamento:
-        await update.message.reply_text("❌ Nenhum pagamento encontrado.")
-        return
-
-    await update.message.reply_text(
-        f"📄 *Status do pagamento*\n\n"
-        f"📌 Plano: {pagamento['plano']}\n"
-        f"💰 Valor: R${pagamento['valor']}\n"
-        f"📌 Status: {pagamento['status']}\n"
-        f"⏳ Expira: {pagamento['expira']}",
-        parse_mode="Markdown"
-    )
+    return {"status": "ok"}
 
 # ======================
-# MENU
+# BOT + API JUNTOS
 # ======================
-async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
+def run_bot():
+    app_bot = ApplicationBuilder().token(BOT_TOKEN).build()
+    app_bot.add_handler(CommandHandler("start", start))
+    app_bot.run_polling()
 
-    if query.data == "menu_planos":
-        await mostrar_planos(update, context)
-
-    elif query.data == "menu_ajuda":
-        await query.message.reply_text(
-            "❓ *Ajuda*\n\n"
-            "• Gere o PIX\n"
-            "• Pague normalmente\n"
-            "• Clique em *Verificar pagamento*\n"
-            "• Receba acesso automático",
-            parse_mode="Markdown"
-        )
-
-# ======================
-# MAIN
-# ======================
-def main():
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
-
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("status", status))
-    app.add_handler(CallbackQueryHandler(callback_planos, pattern="^vip_"))
-    app.add_handler(CallbackQueryHandler(verificar_pagamento, pattern="verificar_pagamento"))
-    app.add_handler(CallbackQueryHandler(menu_callback))
-
-    print("🤖 Bot rodando...")
-    app.run_polling()
+def run_api():
+    uvicorn.run(app, host="0.0.0.0", port=8080)
 
 if __name__ == "__main__":
-    main()
+    threading.Thread(target=run_bot).start()
+    run_api()
