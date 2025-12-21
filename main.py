@@ -51,7 +51,7 @@ async def show_plans(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
 
-# ================= CRIAR PIX =================
+# ================= PIX =================
 def create_pix(plan_key, user_id):
     plan = PLANS[plan_key]
 
@@ -78,6 +78,35 @@ def create_pix(plan_key, user_id):
 
     return response.json()
 
+# ================= CARTÃO (CHECKOUT PRO) =================
+def create_card_payment(plan_key):
+    plan = PLANS[plan_key]
+
+    headers = {
+        "Authorization": f"Bearer {MP_ACCESS_TOKEN}",
+        "Content-Type": "application/json"
+    }
+
+    data = {
+        "items": [
+            {
+                "title": plan["name"],
+                "quantity": 1,
+                "currency_id": "BRL",
+                "unit_price": float(plan["price"])
+            }
+        ],
+        "auto_return": "approved"
+    }
+
+    response = requests.post(
+        "https://api.mercadopago.com/checkout/preferences",
+        headers=headers,
+        json=data
+    )
+
+    return response.json()
+
 # ================= COMPRAR =================
 async def buy_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -98,7 +127,10 @@ async def buy_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["payment_id"] = payment_id
     context.user_data["plan"] = plan_key
 
-    keyboard = [[InlineKeyboardButton("🔄 Verificar pagamento", callback_data="check_payment")]]
+    keyboard = [
+        [InlineKeyboardButton("💳 Pagar no cartão", callback_data=f"card_{plan_key}")],
+        [InlineKeyboardButton("🔄 Verificar pagamento (PIX)", callback_data="check_payment")]
+    ]
 
     await query.message.reply_text(
         f"💳 *Pagamento PIX*\n\n"
@@ -109,7 +141,27 @@ async def buy_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
 
-# ================= VERIFICAR PAGAMENTO =================
+# ================= CARTÃO CALLBACK =================
+async def card_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    plan_key = query.data.replace("card_", "")
+    payment = create_card_payment(plan_key)
+
+    try:
+        link = payment["init_point"]
+    except KeyError:
+        await query.message.reply_text("❌ Erro ao gerar pagamento por cartão.")
+        return
+
+    await query.message.reply_text(
+        "💳 *Pagamento por cartão*\n\n"
+        f"Clique para pagar:\n{link}",
+        parse_mode="Markdown"
+    )
+
+# ================= VERIFICAR PIX =================
 async def check_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -146,19 +198,19 @@ async def check_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await query.message.reply_text(
             "✅ *Pagamento aprovado!*\n\n"
-            f"🔓 Entre no grupo VIP:\n{invite.invite_link}",
+            f"🔓 Acesse o grupo VIP:\n{invite.invite_link}",
             parse_mode="Markdown"
         )
     else:
         await query.message.reply_text("⏳ Pagamento ainda não aprovado.")
 
-# ================= EXPIRAÇÃO AUTOMÁTICA =================
+# ================= EXPIRAÇÃO =================
 async def expiration_checker(app):
     while True:
         await asyncio.sleep(300)
         now = datetime.now()
-
         users = app.bot_data.get("users", {})
+
         for user_id, data in list(users.items()):
             expires = data["expires"]
             if expires and now >= expires:
@@ -166,8 +218,8 @@ async def expiration_checker(app):
                     await app.bot.ban_chat_member(GROUP_ID, user_id)
                     await app.bot.unban_chat_member(GROUP_ID, user_id)
                     del users[user_id]
-                except Exception as e:
-                    print("Erro ao remover usuário:", e)
+                except Exception:
+                    pass
 
 # ================= STARTUP =================
 async def on_startup(app):
@@ -179,11 +231,12 @@ async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     users = context.application.bot_data.get("users", {})
-    texto = "🔐 *Painel Admin*\n\n"
-    texto += f"👥 Usuários ativos: {len(users)}\n\n"
-    texto += "/usuarios – listar usuários\n"
-    texto += "/remover ID – remover usuário\n"
-
+    texto = (
+        "🔐 *Painel Admin*\n\n"
+        f"👥 Usuários ativos: {len(users)}\n\n"
+        "/usuarios – listar\n"
+        "/remover ID – remover\n"
+    )
     await update.message.reply_text(texto, parse_mode="Markdown")
 
 async def usuarios(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -195,7 +248,7 @@ async def usuarios(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Nenhum usuário ativo.")
         return
 
-    texto = "👥 *Usuários VIP:*\n\n"
+    texto = "👥 *Usuários VIP*\n\n"
     for uid, data in users.items():
         exp = data["expires"]
         texto += f"• `{uid}` → {exp.strftime('%d/%m/%Y') if exp else 'Vitalício'}\n"
@@ -211,12 +264,11 @@ async def remover(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     user_id = int(context.args[0])
-
     try:
         await context.bot.ban_chat_member(GROUP_ID, user_id)
         await context.bot.unban_chat_member(GROUP_ID, user_id)
         context.application.bot_data.get("users", {}).pop(user_id, None)
-        await update.message.reply_text(f"✅ Usuário {user_id} removido.")
+        await update.message.reply_text("✅ Usuário removido.")
     except Exception as e:
         await update.message.reply_text(f"Erro: {e}")
 
@@ -236,6 +288,7 @@ def main():
 
     app.add_handler(CallbackQueryHandler(show_plans, pattern="^plans$"))
     app.add_handler(CallbackQueryHandler(buy_plan, pattern="^buy_"))
+    app.add_handler(CallbackQueryHandler(card_payment, pattern="^card_"))
     app.add_handler(CallbackQueryHandler(check_payment, pattern="^check_payment$"))
 
     app.run_polling()
