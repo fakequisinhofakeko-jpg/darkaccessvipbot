@@ -4,22 +4,19 @@ from datetime import datetime, timedelta
 from telegram import (
     Update,
     InlineKeyboardButton,
-    InlineKeyboardMarkup,
-    ChatPermissions
+    InlineKeyboardMarkup
 )
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
     CallbackQueryHandler,
-    MessageHandler,
-    ContextTypes,
-    filters
+    ContextTypes
 )
 
 # ================= CONFIG =================
 BOT_TOKEN = "SEU_TOKEN_AQUI"
-ADMIN_ID = 123456789  # SEU ID
-GROUP_ID = -100XXXXXXXXXX  # ID DO GRUPO VIP
+ADMIN_ID = 123456789
+GROUP_ID = -100XXXXXXXXXX
 
 PIX_KEY = "d506a3da-1aab-4dd3-8655-260b48e04bfa"
 
@@ -30,9 +27,12 @@ PLANOS = {
 
 # ================= DADOS =================
 pagamentos_pendentes = {}
-usuarios_ativos = {}
+usuarios_ativos = {}  # user_id -> {"expira": datetime, "avisado": False}
+mensagens_para_apagar = {}  # user_id -> [message_id]
 logs = []
 total_arrecadado = 0.0
+
+logging.basicConfig(level=logging.INFO)
 
 # ================= START =================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -49,11 +49,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("🔥 VIP 3 Meses", callback_data="plano_vip3")]
     ]
 
-    await update.message.reply_text(
+    sent = await update.message.reply_text(
         msg,
         reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode="Markdown"
     )
+
+    mensagens_para_apagar.setdefault(update.effective_user.id, []).append(sent.message_id)
 
 # ================= PLANOS =================
 async def escolher_plano(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -63,27 +65,26 @@ async def escolher_plano(update: Update, context: ContextTypes.DEFAULT_TYPE):
     plano_id = query.data.replace("plano_", "")
     plano = PLANOS[plano_id]
 
-    pagamentos_pendentes[query.from_user.id] = {
-        "plano": plano,
-        "status": "aguardando"
-    }
+    pagamentos_pendentes[query.from_user.id] = plano
 
     texto = (
         f"📌 **Plano:** {plano['nome']}\n"
         f"💰 **Valor:** R${plano['valor']}\n\n"
         f"🔑 **PIX Copia e Cola:**\n`{PIX_KEY}`\n\n"
-        "📷 Envie o comprovante e depois toque em **Confirmar pagamento**"
+        "📷 Envie o comprovante e toque em **Confirmar pagamento**"
     )
 
     keyboard = [
         [InlineKeyboardButton("✅ Confirmar pagamento", callback_data="confirmar_pagamento")]
     ]
 
-    await query.message.reply_text(
+    sent = await query.message.reply_text(
         texto,
         reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode="Markdown"
     )
+
+    mensagens_para_apagar.setdefault(query.from_user.id, []).append(sent.message_id)
 
 # ================= CONFIRMAR =================
 async def confirmar_pagamento(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -91,9 +92,9 @@ async def confirmar_pagamento(update: Update, context: ContextTypes.DEFAULT_TYPE
     await query.answer()
 
     user_id = query.from_user.id
-    dados = pagamentos_pendentes.get(user_id)
+    plano = pagamentos_pendentes.get(user_id)
 
-    if not dados:
+    if not plano:
         await query.message.reply_text("❌ Nenhum pagamento encontrado.")
         return
 
@@ -109,8 +110,8 @@ async def confirmar_pagamento(update: Update, context: ContextTypes.DEFAULT_TYPE
         text=(
             f"💳 **Pagamento pendente**\n"
             f"👤 ID: {user_id}\n"
-            f"📦 Plano: {dados['plano']['nome']}\n"
-            f"💰 Valor: R${dados['plano']['valor']}"
+            f"📦 Plano: {plano['nome']}\n"
+            f"💰 Valor: R${plano['valor']}"
         ),
         reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode="Markdown"
@@ -126,15 +127,14 @@ async def moderar_pagamento(update: Update, context: ContextTypes.DEFAULT_TYPE):
     acao, user_id = query.data.split("_")
     user_id = int(user_id)
 
-    dados = pagamentos_pendentes.get(user_id)
-    if not dados:
+    plano = pagamentos_pendentes.get(user_id)
+    if not plano:
         await query.message.reply_text("❌ Pedido não encontrado.")
         return
 
     if acao == "aprovar":
-        plano = dados["plano"]
         expira = datetime.now() + timedelta(days=plano["dias"])
-        usuarios_ativos[user_id] = expira
+        usuarios_ativos[user_id] = {"expira": expira, "avisado": False}
 
         global total_arrecadado
         total_arrecadado += plano["valor"]
@@ -151,7 +151,6 @@ async def moderar_pagamento(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
         logs.append(f"{user_id} aprovado {plano['nome']}")
-
         del pagamentos_pendentes[user_id]
 
         await query.message.reply_text("✅ Pagamento aprovado.")
@@ -177,26 +176,38 @@ async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(texto, parse_mode="Markdown")
 
-# ================= EXPIRAÇÃO =================
+# ================= JOBS =================
 async def verificar_expiracoes(context: ContextTypes.DEFAULT_TYPE):
     agora = datetime.now()
-    remover = []
 
-    for user_id, expira in usuarios_ativos.items():
-        if agora >= expira:
-            remover.append(user_id)
+    for user_id, dados in list(usuarios_ativos.items()):
+        if agora >= dados["expira"]:
             await context.bot.ban_chat_member(GROUP_ID, user_id)
+            del usuarios_ativos[user_id]
 
-    for u in remover:
-        del usuarios_ativos[u]
+        elif not dados["avisado"] and dados["expira"] - agora <= timedelta(days=3):
+            await context.bot.send_message(
+                chat_id=user_id,
+                text="⏰ Seu acesso VIP vence em 3 dias."
+            )
+            dados["avisado"] = True
 
-# ================= LIMPEZA =================
 async def limpar_mensagens(context: ContextTypes.DEFAULT_TYPE):
-    pass  # visual mantido, limpeza silenciosa
+    for user_id, msgs in mensagens_para_apagar.items():
+        for msg_id in msgs:
+            try:
+                await context.bot.delete_message(chat_id=user_id, message_id=msg_id)
+            except:
+                pass
+        mensagens_para_apagar[user_id] = []
 
 # ================= MAIN =================
+async def post_init(app):
+    app.job_queue.run_repeating(verificar_expiracoes, interval=3600)
+    app.job_queue.run_repeating(limpar_mensagens, interval=1800)
+
 def main():
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
+    app = ApplicationBuilder().token(BOT_TOKEN).post_init(post_init).build()
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("admin", admin))
@@ -204,8 +215,6 @@ def main():
     app.add_handler(CallbackQueryHandler(escolher_plano, pattern="^plano_"))
     app.add_handler(CallbackQueryHandler(confirmar_pagamento, pattern="confirmar_pagamento"))
     app.add_handler(CallbackQueryHandler(moderar_pagamento, pattern="^(aprovar|rejeitar)_"))
-
-    app.job_queue.run_repeating(verificar_expiracoes, interval=3600)
 
     app.run_polling()
 
