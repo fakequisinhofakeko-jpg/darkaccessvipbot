@@ -1,51 +1,44 @@
-# ===================== BOT VIP TELEGRAM | PIX MANUAL | ADMIN APROVA =====================
-# Python 3.11 | python-telegram-bot v20+
-# NÃO use asyncio.run() — run_polling já gerencia o loop
-
 import os
 import sqlite3
-import uuid
-import threading
-import time
+import asyncio
 from datetime import datetime, timedelta
 
-import requests
 from telegram import (
     Update,
     InlineKeyboardButton,
-    InlineKeyboardMarkup,
+    InlineKeyboardMarkup
 )
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
     CallbackQueryHandler,
-    MessageHandler,
     ContextTypes,
-    filters,
+    MessageHandler,
+    filters
 )
 
-# ===================== CONFIG =====================
+# ================= CONFIG =================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-GROUP_ID = int(os.getenv("GROUP_ID", "0"))
-ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
+GROUP_ID = int(os.getenv("GROUP_ID"))
+ADMIN_ID = int(os.getenv("ADMIN_ID"))
+
+PIX_KEY = "d506a3da-1aab-4dd3-8655-260b48e04bfa"
 
 if not BOT_TOKEN or not GROUP_ID or not ADMIN_ID:
-    raise RuntimeError("❌ Defina BOT_TOKEN, GROUP_ID e ADMIN_ID nas variáveis de ambiente")
+    raise RuntimeError("Variáveis obrigatórias não configuradas")
 
-DB_FILE = "database.db"
-
-# ===================== PLANOS =====================
+# ================= PLANOS =================
 PLANS = {
-    "vip_1": {"name": "VIP 1 Mês", "price": "R$24,90", "days": 30},
-    "vip_3": {"name": "VIP 3 Meses", "price": "R$64,90", "days": 90},
-    "vip_vitalicio": {"name": "VIP Vitalício", "price": "R$149,90", "days": None},
+    "vip_1": {"name": "VIP 1 Mês", "price": 24.90, "days": 30},
+    "vip_3": {"name": "VIP 3 Meses", "price": 64.90, "days": 90},
+    "vip_vitalicio": {"name": "VIP Vitalício", "price": 149.90, "days": None},
 }
 
-# ===================== DATABASE =====================
-conn = sqlite3.connect(DB_FILE, check_same_thread=False)
-cur = conn.cursor()
+# ================= DATABASE =================
+conn = sqlite3.connect("database.db", check_same_thread=False)
+cursor = conn.cursor()
 
-cur.execute("""
+cursor.execute("""
 CREATE TABLE IF NOT EXISTS users (
     user_id INTEGER PRIMARY KEY,
     plan TEXT,
@@ -53,64 +46,20 @@ CREATE TABLE IF NOT EXISTS users (
 )
 """)
 
-cur.execute("""
+cursor.execute("""
 CREATE TABLE IF NOT EXISTS payments (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER,
     username TEXT,
     plan TEXT,
     status TEXT,
-    created_at TEXT
+    date TEXT
 )
 """)
 
 conn.commit()
 
-# ===================== HELPERS DB =====================
-def save_payment(user_id, username, plan):
-    cur.execute(
-        "INSERT INTO payments (user_id, username, plan, status, created_at) VALUES (?, ?, ?, ?, ?)",
-        (user_id, username or "-", plan, "pending", datetime.now().strftime("%d/%m/%Y %H:%M"))
-    )
-    conn.commit()
-
-def approve_payment(user_id, plan_key):
-    plan = PLANS[plan_key]
-    expires = None
-    if plan["days"]:
-        expires = (datetime.now() + timedelta(days=plan["days"])).isoformat()
-
-    cur.execute(
-        "REPLACE INTO users (user_id, plan, expires_at) VALUES (?, ?, ?)",
-        (user_id, plan_key, expires)
-    )
-    cur.execute(
-        "UPDATE payments SET status='approved' WHERE user_id=? AND status='pending'",
-        (user_id,)
-    )
-    conn.commit()
-
-def get_users():
-    cur.execute("SELECT user_id, plan, expires_at FROM users")
-    return cur.fetchall()
-
-def get_stats():
-    cur.execute("SELECT COUNT(*), COUNT(CASE WHEN status='approved' THEN 1 END) FROM payments")
-    total, approved = cur.fetchone()
-    return total or 0, approved or 0
-
-# ===================== CLEAN CHAT (30 MIN) =====================
-def schedule_cleanup(bot, chat_id, message_ids, delay=1800):
-    def worker():
-        time.sleep(delay)
-        for mid in message_ids:
-            try:
-                bot.delete_message(chat_id, mid)
-            except:
-                pass
-    threading.Thread(target=worker, daemon=True).start()
-
-# ===================== START =====================
+# ================= START =================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (
         "🔞 *AVISO LEGAL*\n"
@@ -120,34 +69,32 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🔒 Conteúdo premium"
     )
 
-    kb = [[InlineKeyboardButton("🔥 Ver planos VIP", callback_data="plans")]]
+    kb = [[InlineKeyboardButton("🔥 Ver planos", callback_data="plans")]]
 
-    msg = await update.message.reply_text(
+    await update.message.reply_text(
         text,
         reply_markup=InlineKeyboardMarkup(kb),
         parse_mode="Markdown"
     )
 
-    context.user_data["cleanup"] = [msg.message_id]
-
-# ===================== PLANOS =====================
+# ================= PLANOS =================
 async def show_plans(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
 
     kb = [
-        [InlineKeyboardButton("💎 VIP 1 Mês – R$24,90", callback_data="buy_vip_1")],
-        [InlineKeyboardButton("🔥 VIP 3 Meses – R$64,90", callback_data="buy_vip_3")],
-        [InlineKeyboardButton("👑 VIP Vitalício – R$149,90", callback_data="buy_vip_vitalicio")],
+        [InlineKeyboardButton("VIP 1 Mês – R$24,90", callback_data="buy_vip_1")],
+        [InlineKeyboardButton("VIP 3 Meses – R$64,90", callback_data="buy_vip_3")],
+        [InlineKeyboardButton("VIP Vitalício – R$149,90", callback_data="buy_vip_vitalicio")]
     ]
 
     await q.edit_message_text(
-        "💥 *Escolha seu plano VIP:*",
+        "📦 *Escolha seu plano:*",
         reply_markup=InlineKeyboardMarkup(kb),
         parse_mode="Markdown"
     )
 
-# ===================== BUY (PIX MANUAL) =====================
+# ================= COMPRA =================
 async def buy(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
@@ -157,33 +104,20 @@ async def buy(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     context.user_data["plan"] = plan_key
 
-    text = (
-        f"💳 *Pagamento via PIX*\n\n"
-        f"📌 Plano: {plan['name']}\n"
-        f"💰 Valor: {plan['price']}\n\n"
-        f"🔑 *PIX Copia e Cola:*\n"
-        f"`SUA_CHAVE_PIX_AQUI`\n\n"
-        f"📷 Envie o comprovante aqui no chat e depois toque em **Confirmar Pagamento**."
-    )
+    kb = [
+        [InlineKeyboardButton("✅ Confirmar pagamento", callback_data="confirm_payment")]
+    ]
 
-    kb = [[InlineKeyboardButton("✅ Confirmar pagamento", callback_data="confirm_payment")]]
-
-    msg = await q.edit_message_text(
-        text,
+    await q.edit_message_text(
+        f"📦 *Plano:* {plan['name']}\n"
+        f"💰 *Valor:* R${plan['price']}\n\n"
+        f"🔑 *Chave PIX:*\n`{PIX_KEY}`\n\n"
+        "Após pagar, clique em *Confirmar pagamento*.",
         reply_markup=InlineKeyboardMarkup(kb),
         parse_mode="Markdown"
     )
 
-    context.user_data.setdefault("cleanup", []).append(msg.message_id)
-
-# ===================== RECEIVE PROOF =====================
-async def receive_proof(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Apenas registra que o comprovante chegou
-    await update.message.reply_text(
-        "📥 Comprovante recebido.\nAguarde a confirmação do administrador."
-    )
-
-# ===================== CONFIRM (USER) =====================
+# ================= CONFIRMAÇÃO =================
 async def confirm_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
@@ -191,114 +125,104 @@ async def confirm_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = q.from_user
     plan_key = context.user_data.get("plan")
 
-    if not plan_key:
-        await q.edit_message_text("❌ Sessão expirada. Use /start novamente.")
-        return
+    cursor.execute(
+        "INSERT INTO payments (user_id, username, plan, status, date) VALUES (?, ?, ?, ?, ?)",
+        (
+            user.id,
+            user.username,
+            plan_key,
+            "pending",
+            datetime.now().strftime("%d/%m/%Y %H:%M")
+        )
+    )
+    conn.commit()
 
-    save_payment(user.id, user.username, plan_key)
-
-    await q.edit_message_text(
-        "⏳ Pagamento em análise.\nVocê será notificado após aprovação."
+    await context.bot.send_message(
+        ADMIN_ID,
+        f"💰 *NOVA SOLICITAÇÃO*\n\n"
+        f"👤 @{user.username}\n"
+        f"🆔 `{user.id}`\n"
+        f"📦 {PLANS[plan_key]['name']}\n\n"
+        f"Use:\n/aprovar {user.id}\n/recusar {user.id}",
+        parse_mode="Markdown"
     )
 
-# ===================== ADMIN PANEL =====================
+    await q.edit_message_text(
+        "⏳ Pagamento enviado para análise.\n"
+        "Aguarde a confirmação."
+    )
+
+# ================= ADMIN =================
 async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
 
-    total, approved = get_stats()
-
-    kb = [
-        [InlineKeyboardButton("👥 Usuários ativos", callback_data="admin_users")],
-        [InlineKeyboardButton("🧾 Vendas", callback_data="admin_sales")],
-    ]
+    cursor.execute("SELECT COUNT(*), SUM(CASE WHEN status='approved' THEN 1 ELSE 0 END) FROM payments")
+    total, approved = cursor.fetchone()
 
     await update.message.reply_text(
-        f"👑 *Painel Admin*\n\n"
-        f"📊 Vendas totais: {total}\n"
-        f"✅ Aprovadas: {approved}",
-        reply_markup=InlineKeyboardMarkup(kb),
+        f"👑 *PAINEL ADMIN*\n\n"
+        f"📥 Solicitações: {total}\n"
+        f"✅ Aprovadas: {approved}\n\n"
+        f"🔑 PIX:\n`{PIX_KEY}`",
         parse_mode="Markdown"
     )
 
-async def admin_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    await q.answer()
-
-    rows = get_users()
-    if not rows:
-        await q.edit_message_text("Nenhum usuário ativo.")
-        return
-
-    text = "👥 *Usuários VIP:*\n\n"
-    for uid, plan, exp in rows:
-        exp_txt = "Vitalício" if not exp else datetime.fromisoformat(exp).strftime("%d/%m/%Y")
-        text += f"🆔 {uid} — {plan} — {exp_txt}\n"
-
-    await q.edit_message_text(text, parse_mode="Markdown")
-
-async def admin_sales(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    await q.answer()
-
-    cur.execute("SELECT user_id, plan, status, created_at FROM payments ORDER BY id DESC LIMIT 10")
-    rows = cur.fetchall()
-
-    if not rows:
-        await q.edit_message_text("Nenhuma venda.")
-        return
-
-    text = "🧾 *Últimas vendas:*\n\n"
-    for uid, plan, status, date in rows:
-        text += f"👤 {uid}\n📦 {plan}\n📌 {status}\n📅 {date}\n\n"
-
-    await q.edit_message_text(text, parse_mode="Markdown")
-
-# ===================== ADMIN APPROVE =====================
-async def approve(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# ================= APROVAR =================
+async def aprovar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
 
-    if not context.args:
-        await update.message.reply_text("Use: /aprovar USER_ID PLANO")
+    user_id = int(context.args[0])
+
+    cursor.execute("SELECT plan FROM payments WHERE user_id=? AND status='pending'", (user_id,))
+    row = cursor.fetchone()
+    if not row:
+        await update.message.reply_text("Pagamento não encontrado.")
         return
 
-    user_id = int(context.args[0])
-    plan_key = context.args[1]
+    plan_key = row[0]
+    plan = PLANS[plan_key]
 
-    approve_payment(user_id, plan_key)
-
-    invite = await context.bot.create_chat_invite_link(
-        GROUP_ID,
-        member_limit=1,
-        expire_date=int(time.time()) + 600
+    expires = (
+        (datetime.now() + timedelta(days=plan["days"])).isoformat()
+        if plan["days"] else None
     )
+
+    cursor.execute(
+        "REPLACE INTO users (user_id, plan, expires_at) VALUES (?, ?, ?)",
+        (user_id, plan_key, expires)
+    )
+    cursor.execute(
+        "UPDATE payments SET status='approved' WHERE user_id=?",
+        (user_id,)
+    )
+    conn.commit()
+
+    invite = await context.bot.create_chat_invite_link(GROUP_ID, member_limit=1)
 
     await context.bot.send_message(
         user_id,
         f"✅ *Pagamento aprovado!*\n\n"
-        f"🔓 Acesse o grupo:\n{invite.invite_link}",
+        f"🔓 Acesso VIP:\n{invite.invite_link}",
         parse_mode="Markdown"
     )
 
-# ===================== MAIN =====================
+    await update.message.reply_text("Aprovado com sucesso.")
+
+# ================= MAIN =================
 def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("admin", admin))
-    app.add_handler(CommandHandler("aprovar", approve))
+    app.add_handler(CommandHandler("aprovar", aprovar))
 
     app.add_handler(CallbackQueryHandler(show_plans, pattern="^plans$"))
     app.add_handler(CallbackQueryHandler(buy, pattern="^buy_"))
     app.add_handler(CallbackQueryHandler(confirm_payment, pattern="^confirm_payment$"))
-    app.add_handler(CallbackQueryHandler(admin_users, pattern="^admin_users$"))
-    app.add_handler(CallbackQueryHandler(admin_sales, pattern="^admin_sales$"))
 
-    app.add_handler(MessageHandler(filters.PHOTO | filters.Document.IMAGE, receive_proof))
-
-    print("🤖 Bot iniciado com sucesso")
-    app.run_polling(drop_pending_updates=True)
+    app.run_polling()
 
 if __name__ == "__main__":
     main()
