@@ -21,7 +21,7 @@ PLANS = {
 # ---------- START ----------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
-        [InlineKeyboardButton("📌 Planos", callback_data="plans")]
+        [InlineKeyboardButton("📌 Ver planos", callback_data="plans")]
     ]
     await update.message.reply_text(
         "🔥 *Dark Access VIP*\n\nEscolha uma opção:",
@@ -29,45 +29,23 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
 
-# ---------- PLANOS ----------
-async def buy_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# ---------- MOSTRAR PLANOS ----------
+async def show_plans(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
-    plan_key = query.data.replace("buy_", "")
-    plan = PLANS[plan_key]
-
-    payment = create_pix(plan_key, query.from_user.id)
-
-    # 🔴 VALIDAÇÃO OBRIGATÓRIA
-    try:
-        pix_code = payment["point_of_interaction"]["transaction_data"]["qr_code"]
-        payment_id = payment["id"]
-    except KeyError:
-        await query.edit_message_text(
-            "❌ *Erro ao gerar o PIX.*\n\n"
-            "Tente novamente em alguns segundos.",
-            parse_mode="Markdown"
-        )
-        return
-
-    context.user_data["payment_id"] = payment_id
-    context.user_data["plan"] = plan_key
-
     keyboard = [
-        [InlineKeyboardButton("🔄 Verificar pagamento", callback_data="check_payment")]
+        [InlineKeyboardButton("💎 VIP 1 Mês – R$24,90", callback_data="buy_vip_1")],
+        [InlineKeyboardButton("🔥 VIP 3 Meses – R$64,90", callback_data="buy_vip_3")],
+        [InlineKeyboardButton("👑 VIP Vitalício – R$149,90", callback_data="buy_vip_vitalicio")]
     ]
 
     await query.edit_message_text(
-        f"💳 *Pagamento PIX*\n\n"
-        f"📌 Plano: {plan['name']}\n"
-        f"💰 Valor: R${plan['price']}\n\n"
-        f"🔑 *Pix Copia e Cola:*\n"
-        f"`{pix_code}`\n\n"
-        f"⚠️ Após pagar, clique em *Verificar pagamento*.",
+        "📌 *Escolha seu plano:*",
         reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode="Markdown"
     )
+
 # ---------- CRIAR PIX ----------
 def create_pix(plan_key, user_id):
     plan = PLANS[plan_key]
@@ -77,6 +55,7 @@ def create_pix(plan_key, user_id):
         "Authorization": f"Bearer {MP_ACCESS_TOKEN}",
         "Content-Type": "application/json"
     }
+
     data = {
         "transaction_amount": plan["price"],
         "description": plan["name"],
@@ -93,10 +72,16 @@ async def buy_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
 
     plan_key = query.data.replace("buy_", "")
+    plan = PLANS[plan_key]
+
     payment = create_pix(plan_key, query.from_user.id)
 
-    pix_code = payment["point_of_interaction"]["transaction_data"]["qr_code"]
-    payment_id = payment["id"]
+    try:
+        pix_code = payment["point_of_interaction"]["transaction_data"]["qr_code"]
+        payment_id = payment["id"]
+    except KeyError:
+        await query.edit_message_text("❌ Erro ao gerar o PIX. Tente novamente.")
+        return
 
     context.user_data["payment_id"] = payment_id
     context.user_data["plan"] = plan_key
@@ -107,9 +92,11 @@ async def buy_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await query.edit_message_text(
         f"💳 *Pagamento PIX*\n\n"
-        f"📌 Plano: {PLANS[plan_key]['name']}\n"
-        f"💰 Valor: R${PLANS[plan_key]['price']}\n\n"
-        f"🔑 *Copie o código PIX abaixo:*\n`{pix_code}`",
+        f"📌 Plano: {plan['name']}\n"
+        f"💰 Valor: R${plan['price']}\n\n"
+        f"🔑 *Pix Copia e Cola:*\n"
+        f"`{pix_code}`\n\n"
+        f"Após pagar, clique em *Verificar pagamento*.",
         reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode="Markdown"
     )
@@ -130,9 +117,7 @@ async def check_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
     headers = {"Authorization": f"Bearer {MP_ACCESS_TOKEN}"}
     response = requests.get(url, headers=headers).json()
 
-    status = response.get("status")
-
-    if status == "approved":
+    if response.get("status") == "approved":
         await context.bot.send_message(
             chat_id=GROUP_ID,
             text=f"✅ Novo acesso aprovado\nPlano: {PLANS[plan_key]['name']}\nUsuário: @{query.from_user.username or query.from_user.id}"
@@ -143,7 +128,7 @@ async def check_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     else:
         await query.edit_message_text(
-            "⏳ Pagamento ainda não aprovado.\nTente novamente em alguns segundos."
+            "⏳ Pagamento ainda não aprovado.\nTente novamente."
         )
 
 # ---------- MAIN ----------
@@ -151,9 +136,9 @@ def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CallbackQueryHandler(show_plans, pattern="plans"))
-    app.add_handler(CallbackQueryHandler(buy_plan, pattern="buy_"))
-    app.add_handler(CallbackQueryHandler(check_payment, pattern="check_payment"))
+    app.add_handler(CallbackQueryHandler(show_plans, pattern="^plans$"))
+    app.add_handler(CallbackQueryHandler(buy_plan, pattern="^buy_"))
+    app.add_handler(CallbackQueryHandler(check_payment, pattern="^check_payment$"))
 
     app.run_polling()
 
