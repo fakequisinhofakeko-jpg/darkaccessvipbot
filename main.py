@@ -5,23 +5,26 @@ from telegram.ext import (
     CallbackQueryHandler,
     ContextTypes
 )
+from datetime import datetime, timedelta
+import time
 
 # ================= CONFIG =================
-BOT_TOKEN = "8444138111:AAGuhgOzBtMsrNRQ1Zj2_pKuquMXi7jcHGo"
+BOT_TOKEN = "SEU_TOKEN_AQUI"
 ADMIN_ID = 1208316553
 GROUP_ID = -1003513694224
 PIX_KEY = "d506a3da-1aab-4dd3-8655-260b48e04bfa"
 
 # ================= PLANOS =================
 PLANOS = {
-    "vip1": {"nome": "VIP 1 Mês", "valor": 24.90},
-    "vip3": {"nome": "VIP 3 Meses", "valor": 64.90},
-    "vip_vitalicio": {"nome": "VIP Vitalício", "valor": 149.90},
+    "vip1": {"nome": "VIP 1 Mês", "valor": 24.90, "dias": 30},
+    "vip3": {"nome": "VIP 3 Meses", "valor": 64.90, "dias": 90},
+    "vip_vitalicio": {"nome": "VIP Vitalício", "valor": 149.90, "dias": None},
 }
 
 # ================= DADOS =================
 pagamentos_pendentes = {}
-usuarios_ativos = set()
+usuarios_ativos = {}          # controle de plano ativo
+confirmacoes_enviadas = set() # anti-spam
 total_arrecadado = 0.0
 
 # ================= START =================
@@ -40,20 +43,29 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("💎 VIP Vitalício", callback_data="plano_vip_vitalicio")],
     ]
 
-    await update.message.reply_text(
-        texto,
-        reply_markup=InlineKeyboardMarkup(teclado)
-    )
+    await update.message.reply_text(texto, reply_markup=InlineKeyboardMarkup(teclado))
 
 # ================= ESCOLHER PLANO =================
 async def escolher_plano(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
 
+    user_id = q.from_user.id
     plano_id = q.data.replace("plano_", "")
     plano = PLANOS[plano_id]
 
-    pagamentos_pendentes[q.from_user.id] = plano
+    # 🔒 BLOQUEIO DE PLANO ATIVO
+    ativo = usuarios_ativos.get(user_id)
+    if ativo:
+        if ativo["plano"] == plano_id:
+            if ativo["expira_em"] is None or ativo["expira_em"] > datetime.now():
+                await q.message.reply_text(
+                    "⚠️ Você já possui esse plano ativo.\n"
+                    "Aguarde o vencimento para comprar novamente."
+                )
+                return
+
+    pagamentos_pendentes[user_id] = plano | {"id": plano_id}
 
     texto = (
         f"📦 {plano['nome']}\n"
@@ -62,15 +74,9 @@ async def escolher_plano(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Após pagar, toque em **Confirmar pagamento**."
     )
 
-    teclado = [
-        [InlineKeyboardButton("✅ Confirmar pagamento", callback_data="confirmar")]
-    ]
+    teclado = [[InlineKeyboardButton("✅ Confirmar pagamento", callback_data="confirmar")]]
 
-    await q.message.reply_text(
-        texto,
-        reply_markup=InlineKeyboardMarkup(teclado),
-        parse_mode="Markdown"
-    )
+    await q.message.reply_text(texto, reply_markup=InlineKeyboardMarkup(teclado), parse_mode="Markdown")
 
 # ================= CONFIRMAR PAGAMENTO =================
 async def confirmar(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -78,13 +84,18 @@ async def confirmar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await q.answer()
 
     user_id = q.from_user.id
-    plano = pagamentos_pendentes.get(user_id)
 
+    # 🛑 ANTI-SPAM
+    if user_id in confirmacoes_enviadas:
+        return
+
+    plano = pagamentos_pendentes.get(user_id)
     if not plano:
         await q.message.reply_text("❌ Nenhum pagamento pendente encontrado.")
         return
 
-    # 👤 MENSAGEM PARA O CLIENTE
+    confirmacoes_enviadas.add(user_id)
+
     await q.message.reply_text(
         "⏳ Pagamento enviado para aprovação.\n"
         "Assim que for confirmado, o acesso será liberado."
@@ -122,17 +133,30 @@ async def moderar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global total_arrecadado
 
     if acao == "aprovar":
+        # ⏳ EXPIRAÇÃO DO LINK (10 min)
         link = await context.bot.create_chat_invite_link(
             chat_id=GROUP_ID,
-            member_limit=1
+            member_limit=1,
+            expire_date=int(time.time()) + 600
         )
 
-        usuarios_ativos.add(uid)
+        # 📅 REGISTRA PLANO ATIVO
+        if plano["dias"]:
+            expira = datetime.now() + timedelta(days=plano["dias"])
+        else:
+            expira = None  # vitalício
+
+        usuarios_ativos[uid] = {
+            "plano": plano["id"],
+            "expira_em": expira
+        }
+
         total_arrecadado += plano["valor"]
 
         await context.bot.send_message(
             uid,
-            f"✅ Pagamento aprovado!\n\n🔗 Acesso ao grupo:\n{link.invite_link}"
+            f"✅ Pagamento aprovado!\n\n"
+            f"🔗 Acesso ao grupo (válido por 10 min):\n{link.invite_link}"
         )
 
         await q.message.reply_text("✅ Aprovado e link enviado.")
@@ -141,50 +165,13 @@ async def moderar(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await q.message.reply_text("❌ Rejeitado.")
 
     pagamentos_pendentes.pop(uid, None)
-
-# ================= ADMIN =================
-async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        return
-
-    teclado = [
-        [InlineKeyboardButton("👥 Usuários ativos", callback_data="admin_usuarios")],
-        [InlineKeyboardButton("⏳ Pagamentos pendentes", callback_data="admin_pendentes")],
-        [InlineKeyboardButton("✅ Pagamentos aprovados", callback_data="admin_aprovados")],
-        [InlineKeyboardButton("💰 Total arrecadado", callback_data="admin_total")],
-    ]
-
-    await update.message.reply_text(
-        "👑 Painel Admin",
-        reply_markup=InlineKeyboardMarkup(teclado)
-    )
-
-# ================= CALLBACKS ADMIN =================
-async def admin_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    await q.answer()
-
-    if q.data == "admin_usuarios":
-        texto = f"👥 Usuários ativos: {len(usuarios_ativos)}"
-    elif q.data == "admin_pendentes":
-        texto = f"⏳ Pagamentos pendentes: {len(pagamentos_pendentes)}"
-    elif q.data == "admin_aprovados":
-        texto = f"✅ Pagamentos aprovados: {len(usuarios_ativos)}"
-    elif q.data == "admin_total":
-        texto = f"💰 Total arrecadado: R${total_arrecadado:.2f}"
-    else:
-        texto = "❌ Opção inválida."
-
-    await q.message.reply_text(texto)
+    confirmacoes_enviadas.discard(uid)
 
 # ================= MAIN =================
 def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("admin", admin))
-
-    app.add_handler(CallbackQueryHandler(admin_callbacks, pattern="^admin_"))
     app.add_handler(CallbackQueryHandler(moderar, pattern="^(aprovar|rejeitar)_"))
     app.add_handler(CallbackQueryHandler(confirmar, pattern="^confirmar$"))
     app.add_handler(CallbackQueryHandler(escolher_plano, pattern="^plano_"))
