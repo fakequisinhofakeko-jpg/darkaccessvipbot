@@ -9,12 +9,11 @@ from telegram.ext import (
     ContextTypes
 )
 
-# ================== VARIÁVEIS DE AMBIENTE ==================
+# ================== VARIÁVEIS ==================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 GROUP_ID = int(os.getenv("GROUP_ID"))
 MP_ACCESS_TOKEN = os.getenv("MP_ACCESS_TOKEN")
 
-# ================== PLANOS ==================
 PLANS = {
     "vip_1": {"name": "VIP 1 Mês", "price": 24.90},
     "vip_3": {"name": "VIP 3 Meses", "price": 64.90},
@@ -23,16 +22,14 @@ PLANS = {
 
 # ================== START ==================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [
-        [InlineKeyboardButton("📌 Ver planos", callback_data="plans")]
-    ]
+    keyboard = [[InlineKeyboardButton("📌 Ver planos", callback_data="plans")]]
     await update.message.reply_text(
         "🔥 *Dark Access VIP*\n\nEscolha uma opção:",
         reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode="Markdown"
     )
 
-# ================== MOSTRAR PLANOS ==================
+# ================== PLANOS ==================
 async def show_plans(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -49,7 +46,7 @@ async def show_plans(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
 
-# ================== CRIAR PIX (CORRIGIDO) ==================
+# ================== CRIAR PIX ==================
 def create_pix(plan_key, user_id):
     plan = PLANS[plan_key]
 
@@ -58,33 +55,27 @@ def create_pix(plan_key, user_id):
     headers = {
         "Authorization": f"Bearer {MP_ACCESS_TOKEN}",
         "Content-Type": "application/json",
-        # 🔥 ESSENCIAL PARA NÃO DAR ERRO 400
-        "X-Idempotency-Key": str(uuid.uuid4())
+        "X-Idempotency-Key": str(uuid.uuid4())  # 🔥 ESSENCIAL
     }
 
     data = {
         "transaction_amount": float(plan["price"]),
         "description": plan["name"],
         "payment_method_id": "pix",
-        "external_reference": f"user_{user_id}_{plan_key}",
         "payer": {
             "email": f"user{user_id}@darkaccessvip.com"
         }
     }
 
     response = requests.post(url, headers=headers, json=data)
+    result = response.json()
 
-    try:
-        result = response.json()
-    except Exception:
-        return {"error": "Resposta inválida do Mercado Pago"}
-
-    if response.status_code not in [200, 201]:
+    if response.status_code != 201:
         print("❌ ERRO MERCADO PAGO:", result)
 
     return result
 
-# ================== COMPRAR PLANO ==================
+# ================== COMPRAR ==================
 async def buy_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -99,7 +90,7 @@ async def buy_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
         payment_id = payment["id"]
     except Exception:
         await query.edit_message_text(
-            "❌ *Erro ao gerar o PIX.*\nTente novamente em alguns segundos.",
+            "❌ *Erro ao gerar o PIX.*\nTente novamente.",
             parse_mode="Markdown"
         )
         return
@@ -107,9 +98,7 @@ async def buy_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["payment_id"] = payment_id
     context.user_data["plan"] = plan_key
 
-    keyboard = [
-        [InlineKeyboardButton("🔄 Verificar pagamento", callback_data="check_payment")]
-    ]
+    keyboard = [[InlineKeyboardButton("🔄 Verificar pagamento", callback_data="check_payment")]]
 
     await query.edit_message_text(
         f"💳 *Pagamento PIX*\n\n"
@@ -139,18 +128,15 @@ async def check_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
     response = requests.get(url, headers=headers).json()
 
     if response.get("status") == "approved":
-        await context.bot.send_message(
+        invite = await context.bot.create_chat_invite_link(
             chat_id=GROUP_ID,
-            text=(
-                "✅ *Novo acesso aprovado*\n"
-                f"Plano: {PLANS[plan_key]['name']}\n"
-                f"Usuário: @{query.from_user.username or query.from_user.id}"
-            ),
-            parse_mode="Markdown"
+            member_limit=1
         )
 
         await query.edit_message_text(
-            "✅ *Pagamento aprovado!*\n\nAcesso liberado.",
+            "✅ *Pagamento aprovado!*\n\n"
+            "🔓 Acesso liberado:\n"
+            f"{invite.invite_link}",
             parse_mode="Markdown"
         )
     else:
