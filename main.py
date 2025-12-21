@@ -13,6 +13,7 @@ from telegram.ext import (
 )
 
 # ================= VARIÁVEIS =================
+ADMIN_ID = int(os.getenv("ADMIN_ID"))
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 GROUP_ID = int(os.getenv("GROUP_ID"))
 MP_ACCESS_TOKEN = os.getenv("MP_ACCESS_TOKEN")
