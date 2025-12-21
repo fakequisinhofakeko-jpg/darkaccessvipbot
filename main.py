@@ -91,13 +91,17 @@ async def buy_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pix_code = payment["point_of_interaction"]["transaction_data"]["qr_code"]
         payment_id = payment["id"]
     except Exception:
-        await query.message.reply_text("❌ Erro ao gerar o PIX. Tente novamente.")
+        await query.message.reply_text(
+            "❌ Erro ao gerar o PIX. Tente novamente."
+        )
         return
 
     context.user_data["payment_id"] = payment_id
     context.user_data["plan"] = plan_key
 
-    keyboard = [[InlineKeyboardButton("🔄 Verificar pagamento", callback_data="check_payment")]]
+    keyboard = [
+        [InlineKeyboardButton("🔄 Verificar pagamento", callback_data="check_payment")]
+    ]
 
     await query.message.reply_text(
         f"💳 *Pagamento PIX*\n\n"
@@ -149,12 +153,14 @@ async def check_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="Markdown"
         )
     else:
-        await query.message.reply_text("⏳ Pagamento ainda não aprovado.")
+        await query.message.reply_text(
+            "⏳ Pagamento ainda não aprovado."
+        )
 
 # ================= EXPIRAÇÃO AUTOMÁTICA =================
 async def expiration_checker(app):
     while True:
-        await asyncio.sleep(300)
+        await asyncio.sleep(300)  # 5 minutos
         now = datetime.now()
 
         users = app.bot_data.get("users", {})
@@ -168,16 +174,23 @@ async def expiration_checker(app):
                 except Exception as e:
                     print("Erro ao remover usuário:", e)
 
+# ================= STARTUP CORRETO =================
+async def on_startup(app):
+    asyncio.create_task(expiration_checker(app))
+
 # ================= MAIN =================
 def main():
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
+    app = (
+        ApplicationBuilder()
+        .token(BOT_TOKEN)
+        .post_init(on_startup)
+        .build()
+    )
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(show_plans, pattern="^plans$"))
     app.add_handler(CallbackQueryHandler(buy_plan, pattern="^buy_"))
     app.add_handler(CallbackQueryHandler(check_payment, pattern="^check_payment$"))
-
-    app.create_task(expiration_checker(app))
 
     app.run_polling()
 
