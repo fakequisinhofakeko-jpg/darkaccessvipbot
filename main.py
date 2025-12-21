@@ -72,31 +72,7 @@ async def escolher_plano(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
 
-# ================= CONFIRMAR =================
-async def confirmar(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    await q.answer()
 
-    plano = pagamentos_pendentes.get(q.from_user.id)
-    if not plano:
-        await q.message.reply_text("❌ Nenhum pagamento pendente.")
-        return
-
-    teclado = [[
-        InlineKeyboardButton("✅ Aprovar", callback_data=f"aprovar_{q.from_user.id}"),
-        InlineKeyboardButton("❌ Rejeitar", callback_data=f"rejeitar_{q.from_user.id}")
-    ]]
-
-    await context.bot.send_message(
-        ADMIN_ID,
-        f"💳 PAGAMENTO PENDENTE\n\n"
-        f"👤 ID: {q.from_user.id}\n"
-        f"📦 Plano: {plano['nome']}\n"
-        f"💰 Valor: R${plano['valor']}",
-        reply_markup=InlineKeyboardMarkup(teclado)
-    )
-
-    await q.message.reply_text("⏳ Pagamento enviado para aprovação.")
 
 # ================= APROVAR / REJEITAR =================
 async def moderar(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -114,7 +90,42 @@ async def moderar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global total_arrecadado
 
     if acao == "aprovar":
-        link = await context.bot.create_chat_invite_link(
+        
+# ================= CONFIRMAR PAGAMENTO =================
+async def confirmar(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+
+    user_id = q.from_user.id
+    plano = pagamentos_pendentes.get(user_id)
+
+    if not plano:
+        await q.message.reply_text("❌ Nenhum pagamento pendente encontrado.")
+        return
+
+    # ✅ MENSAGEM SOMENTE PARA O COMPRADOR
+    await q.message.reply_text(
+        "⏳ Pagamento enviado para aprovação.\n"
+        "Assim que for confirmado, o acesso será liberado."
+    )
+
+    # 🔒 BOTÕES EXCLUSIVOS DO ADMIN
+    teclado_admin = [[
+        InlineKeyboardButton("✅ Aprovar", callback_data=f"aprovar_{user_id}"),
+        InlineKeyboardButton("❌ Rejeitar", callback_data=f"rejeitar_{user_id}")
+    ]]
+
+    # 👑 MENSAGEM SOMENTE PARA O ADMIN
+    await context.bot.send_message(
+        chat_id=ADMIN_ID,
+        text=(
+            "💳 PAGAMENTO PENDENTE\n\n"
+            f"👤 ID: {user_id}\n"
+            f"📦 Plano: {plano['nome']}\n"
+            f"💰 Valor: R${plano['valor']}"
+        ),
+        reply_markup=InlineKeyboardMarkup(teclado_admin)
+    )     link = await context.bot.create_chat_invite_link(
             chat_id=GROUP_ID,
             member_limit=1
         )
