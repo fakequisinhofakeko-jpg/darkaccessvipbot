@@ -1,3 +1,4 @@
+import asyncio
 import os
 import asyncio
 import requests
@@ -14,7 +15,31 @@ from telegram.ext import (
     CallbackQueryHandler,
     ContextTypes
 )
+async def verificador_automatico(app):
+    while True:
+        await asyncio.sleep(60)  # verifica a cada 1 minuto
 
+        for user_id, info in list(pagamentos.items()):
+            if info["status"] == "pending":
+                dados = verificar_pagamento(info["payment_id"])
+
+                if dados.get("status") == "approved":
+                    info["status"] = "approved"
+                    expira = datetime.now() + timedelta(days=info["dias"])
+
+                    try:
+                        await app.bot.unban_chat_member(GROUP_ID, user_id)
+                        await app.bot.send_message(
+                            chat_id=user_id,
+                            text=(
+                                "✅ *Pagamento aprovado automaticamente!*\n\n"
+                                f"📌 Plano: {info['plano']}\n"
+                                f"⏰ Expira em: {expira.strftime('%d/%m/%Y')}"
+                            ),
+                            parse_mode="Markdown"
+                        )
+                    except Exception as e:
+                        print("Erro ao liberar acesso:", e)
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 GROUP_ID = int(os.getenv("GROUP_ID"))
 MP_ACCESS_TOKEN = os.getenv("MP_ACCESS_TOKEN")
@@ -153,4 +178,13 @@ app.add_handler(CommandHandler("start", start))
 app.add_handler(CallbackQueryHandler(callbacks))
 
 print("🤖 Bot online com sucesso!")
+app.run_polling()
+app = ApplicationBuilder().token(BOT_TOKEN).build()
+
+app.add_handler(CommandHandler("start", start))
+app.add_handler(CallbackQueryHandler(callbacks))
+
+app.create_task(verificador_automatico(app))
+
+print("🤖 Bot online com verificação automática!")
 app.run_polling()
