@@ -13,10 +13,10 @@ from telegram.ext import (
 )
 
 # ================= VARIÁVEIS =================
-ADMIN_ID = int(os.getenv("ADMIN_ID"))
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 GROUP_ID = int(os.getenv("GROUP_ID"))
 MP_ACCESS_TOKEN = os.getenv("MP_ACCESS_TOKEN")
+ADMIN_ID = int(os.getenv("ADMIN_ID"))
 
 # ================= PLANOS =================
 PLANS = {
@@ -92,17 +92,13 @@ async def buy_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pix_code = payment["point_of_interaction"]["transaction_data"]["qr_code"]
         payment_id = payment["id"]
     except Exception:
-        await query.message.reply_text(
-            "❌ Erro ao gerar o PIX. Tente novamente."
-        )
+        await query.message.reply_text("❌ Erro ao gerar o PIX.")
         return
 
     context.user_data["payment_id"] = payment_id
     context.user_data["plan"] = plan_key
 
-    keyboard = [
-        [InlineKeyboardButton("🔄 Verificar pagamento", callback_data="check_payment")]
-    ]
+    keyboard = [[InlineKeyboardButton("🔄 Verificar pagamento", callback_data="check_payment")]]
 
     await query.message.reply_text(
         f"💳 *Pagamento PIX*\n\n"
@@ -154,14 +150,12 @@ async def check_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="Markdown"
         )
     else:
-        await query.message.reply_text(
-            "⏳ Pagamento ainda não aprovado."
-        )
+        await query.message.reply_text("⏳ Pagamento ainda não aprovado.")
 
 # ================= EXPIRAÇÃO AUTOMÁTICA =================
 async def expiration_checker(app):
     while True:
-        await asyncio.sleep(300)  # 5 minutos
+        await asyncio.sleep(300)
         now = datetime.now()
 
         users = app.bot_data.get("users", {})
@@ -175,9 +169,56 @@ async def expiration_checker(app):
                 except Exception as e:
                     print("Erro ao remover usuário:", e)
 
-# ================= STARTUP CORRETO =================
+# ================= STARTUP =================
 async def on_startup(app):
     asyncio.create_task(expiration_checker(app))
+
+# ================= ADMIN =================
+async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+
+    users = context.application.bot_data.get("users", {})
+    texto = "🔐 *Painel Admin*\n\n"
+    texto += f"👥 Usuários ativos: {len(users)}\n\n"
+    texto += "/usuarios – listar usuários\n"
+    texto += "/remover ID – remover usuário\n"
+
+    await update.message.reply_text(texto, parse_mode="Markdown")
+
+async def usuarios(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+
+    users = context.application.bot_data.get("users", {})
+    if not users:
+        await update.message.reply_text("Nenhum usuário ativo.")
+        return
+
+    texto = "👥 *Usuários VIP:*\n\n"
+    for uid, data in users.items():
+        exp = data["expires"]
+        texto += f"• `{uid}` → {exp.strftime('%d/%m/%Y') if exp else 'Vitalício'}\n"
+
+    await update.message.reply_text(texto, parse_mode="Markdown")
+
+async def remover(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+
+    if not context.args:
+        await update.message.reply_text("Use: /remover ID")
+        return
+
+    user_id = int(context.args[0])
+
+    try:
+        await context.bot.ban_chat_member(GROUP_ID, user_id)
+        await context.bot.unban_chat_member(GROUP_ID, user_id)
+        context.application.bot_data.get("users", {}).pop(user_id, None)
+        await update.message.reply_text(f"✅ Usuário {user_id} removido.")
+    except Exception as e:
+        await update.message.reply_text(f"Erro: {e}")
 
 # ================= MAIN =================
 def main():
@@ -189,6 +230,10 @@ def main():
     )
 
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("admin", admin))
+    app.add_handler(CommandHandler("usuarios", usuarios))
+    app.add_handler(CommandHandler("remover", remover))
+
     app.add_handler(CallbackQueryHandler(show_plans, pattern="^plans$"))
     app.add_handler(CallbackQueryHandler(buy_plan, pattern="^buy_"))
     app.add_handler(CallbackQueryHandler(check_payment, pattern="^check_payment$"))
