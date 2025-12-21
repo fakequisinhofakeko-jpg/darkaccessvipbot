@@ -1,4 +1,5 @@
 import os
+import uuid
 import requests
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -8,17 +9,19 @@ from telegram.ext import (
     ContextTypes
 )
 
+# ================== VARIÁVEIS DE AMBIENTE ==================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 GROUP_ID = int(os.getenv("GROUP_ID"))
 MP_ACCESS_TOKEN = os.getenv("MP_ACCESS_TOKEN")
 
+# ================== PLANOS ==================
 PLANS = {
     "vip_1": {"name": "VIP 1 Mês", "price": 24.90},
     "vip_3": {"name": "VIP 3 Meses", "price": 64.90},
     "vip_vitalicio": {"name": "VIP Vitalício", "price": 149.90},
 }
 
-# ---------- START ----------
+# ================== START ==================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [InlineKeyboardButton("📌 Ver planos", callback_data="plans")]
@@ -29,7 +32,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
 
-# ---------- MOSTRAR PLANOS ----------
+# ================== MOSTRAR PLANOS ==================
 async def show_plans(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -46,14 +49,17 @@ async def show_plans(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
 
-# ---------- CRIAR PIX ----------
+# ================== CRIAR PIX (CORRIGIDO) ==================
 def create_pix(plan_key, user_id):
     plan = PLANS[plan_key]
 
     url = "https://api.mercadopago.com/v1/payments"
+
     headers = {
         "Authorization": f"Bearer {MP_ACCESS_TOKEN}",
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
+        # 🔥 ESSENCIAL PARA NÃO DAR ERRO 400
+        "X-Idempotency-Key": str(uuid.uuid4())
     }
 
     data = {
@@ -71,14 +77,14 @@ def create_pix(plan_key, user_id):
     try:
         result = response.json()
     except Exception:
-        return {}
+        return {"error": "Resposta inválida do Mercado Pago"}
 
-    if response.status_code != 201:
+    if response.status_code not in [200, 201]:
         print("❌ ERRO MERCADO PAGO:", result)
 
     return result
 
-# ---------- COMPRAR ----------
+# ================== COMPRAR PLANO ==================
 async def buy_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -92,7 +98,10 @@ async def buy_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pix_code = payment["point_of_interaction"]["transaction_data"]["qr_code"]
         payment_id = payment["id"]
     except Exception:
-        await query.edit_message_text("❌ Erro ao gerar o PIX. Tente novamente.")
+        await query.edit_message_text(
+            "❌ *Erro ao gerar o PIX.*\nTente novamente em alguns segundos.",
+            parse_mode="Markdown"
+        )
         return
 
     context.user_data["payment_id"] = payment_id
@@ -113,7 +122,7 @@ async def buy_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
 
-# ---------- VERIFICAR PAGAMENTO ----------
+# ================== VERIFICAR PAGAMENTO ==================
 async def check_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -132,8 +141,14 @@ async def check_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if response.get("status") == "approved":
         await context.bot.send_message(
             chat_id=GROUP_ID,
-            text=f"✅ Novo acesso aprovado\nPlano: {PLANS[plan_key]['name']}\nUsuário: @{query.from_user.username or query.from_user.id}"
+            text=(
+                "✅ *Novo acesso aprovado*\n"
+                f"Plano: {PLANS[plan_key]['name']}\n"
+                f"Usuário: @{query.from_user.username or query.from_user.id}"
+            ),
+            parse_mode="Markdown"
         )
+
         await query.edit_message_text(
             "✅ *Pagamento aprovado!*\n\nAcesso liberado.",
             parse_mode="Markdown"
@@ -143,7 +158,7 @@ async def check_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "⏳ Pagamento ainda não aprovado.\nTente novamente."
         )
 
-# ---------- MAIN ----------
+# ================== MAIN ==================
 def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
