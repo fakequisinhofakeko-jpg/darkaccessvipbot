@@ -47,7 +47,7 @@ async def show_plans(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 # ---------- CRIAR PIX ----------
-    def create_pix(plan_key, user_id):
+def create_pix(plan_key, user_id):
     plan = PLANS[plan_key]
 
     url = "https://api.mercadopago.com/v1/payments"
@@ -71,11 +71,10 @@ async def show_plans(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         result = response.json()
     except Exception:
-        return {"error": "Resposta inválida do Mercado Pago"}
+        return {}
 
-    # 🔥 DEBUG REAL — ISSO SALVA SUA VIDA
     if response.status_code != 201:
-        print("❌ ERRO MP:", result)
+        print("❌ ERRO MERCADO PAGO:", result)
 
     return result
 
@@ -92,7 +91,7 @@ async def buy_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         pix_code = payment["point_of_interaction"]["transaction_data"]["qr_code"]
         payment_id = payment["id"]
-    except KeyError:
+    except Exception:
         await query.edit_message_text("❌ Erro ao gerar o PIX. Tente novamente.")
         return
 
