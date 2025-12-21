@@ -232,6 +232,22 @@ async def expiration_loop(application):
                 except:
                     pass
                 remove_user(user_id)
+                
+# ================== ADMIN ==================
+async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+
+    kb = [
+        [InlineKeyboardButton("👥 Usuários ativos", callback_data="admin_users")],
+        [InlineKeyboardButton("🧾 Logs de pagamento", callback_data="admin_logs")]
+    ]
+
+    await update.message.reply_text(
+        "👑 *Painel Admin*",
+        reply_markup=InlineKeyboardMarkup(kb),
+        parse_mode="Markdown"
+    )                
 
 # ================== POST INIT ==================
 async def post_init(application):
@@ -246,7 +262,7 @@ def main():
     app.add_handler(CallbackQueryHandler(show_plans, pattern="^plans$"))
     app.add_handler(CallbackQueryHandler(buy_plan, pattern="^buy_"))
     app.add_handler(CallbackQueryHandler(check_payment, pattern="^check_payment$"))
-
+    app.add_handler(CommandHandler("admin", admin))
     print("🤖 Bot iniciado")
     app.run_polling(drop_pending_updates=True)
 
