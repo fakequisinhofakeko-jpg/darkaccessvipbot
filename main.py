@@ -259,14 +259,14 @@ def main():
     app = ApplicationBuilder().token(BOT_TOKEN).post_init(post_init).build()
 
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CallbackQueryHandler(show_plans, pattern="^plans$"))
-    app.add_handler(CallbackQueryHandler(buy_plan, pattern="^buy_"))
-    app.add_handler(CallbackQueryHandler(check_payment, pattern="^check_payment$"))
-    app.add_handler(CommandHandler("admin", admin))
-    print("🤖 Bot iniciado")
-    app.run_polling(drop_pending_updates=True)
-    app.add_handler(CallbackQueryHandler(admin_users, pattern="^admin_users$"))
-    app.add_handler(CallbackQueryHandler(admin_logs, pattern="^admin_logs$"))
-    
+app.add_handler(CommandHandler("admin", admin))
+
+app.add_handler(CallbackQueryHandler(show_plans, pattern="^plans$"))
+app.add_handler(CallbackQueryHandler(buy_plan, pattern="^buy_"))
+app.add_handler(CallbackQueryHandler(check_payment, pattern="^check_"))
+
+app.add_handler(CallbackQueryHandler(admin_users, pattern="^admin_users$"))
+app.add_handler(CallbackQueryHandler(admin_logs, pattern="^admin_logs$"))
+
 if __name__ == "__main__":
     main()
