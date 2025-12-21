@@ -1,69 +1,98 @@
 import os
+import json
+import uuid
 import requests
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
+from telegram import (
+    Update,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup
+)
+from telegram.ext import (
+    ApplicationBuilder,
+    CommandHandler,
+    CallbackQueryHandler,
+    ContextTypes
+)
 
+# =========================
+# CONFIGURAÇÕES
+# =========================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 MP_ACCESS_TOKEN = os.getenv("MP_ACCESS_TOKEN")
 
 VIP_GROUP_ID = -1003513694224
+ARQUIVO_PAGAMENTOS = "pagamentos.json"
+
+# =========================
+# UTILIDADES JSON
+# =========================
+def carregar_pagamentos():
+    if not os.path.exists(ARQUIVO_PAGAMENTOS):
+        return {}
+    with open(ARQUIVO_PAGAMENTOS, "r") as f:
+        return json.load(f)
+
+def salvar_pagamentos(dados):
+    with open(ARQUIVO_PAGAMENTOS, "w") as f:
+        json.dump(dados, f, indent=4)
 
 # =========================
 # START
 # =========================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     teclado = [
-        [InlineKeyboardButton("📌 Planos", callback_data="planos")]
+        [InlineKeyboardButton("📌 Planos", callback_data="menu_planos")],
+        [InlineKeyboardButton("❓ Ajuda", callback_data="menu_ajuda")]
     ]
 
     await update.message.reply_text(
-        "🔥 *Dark Access VIP*\n\nEscolha um plano:",
+        "🔥 *Dark Access VIP*\n\nEscolha uma opção:",
         reply_markup=InlineKeyboardMarkup(teclado),
         parse_mode="Markdown"
     )
 
 # =========================
-# PLANOS
+# MENU PLANOS
 # =========================
 async def mostrar_planos(update: Update, context: ContextTypes.DEFAULT_TYPE):
     teclado = [
-        [InlineKeyboardButton("💎 1 Mês – R$24,90", callback_data="vip_1")],
-        [InlineKeyboardButton("🔥 3 Meses – R$64,90", callback_data="vip_3")],
-        [InlineKeyboardButton("👑 Vitalício – R$149,90", callback_data="vip_v")]
+        [InlineKeyboardButton("💎 1 Mês - R$24,90", callback_data="vip_1m")],
+        [InlineKeyboardButton("🔥 3 Meses - R$64,90", callback_data="vip_3m")],
+        [InlineKeyboardButton("👑 Vitalício - R$149,90", callback_data="vip_vitalicio")]
     ]
 
     await update.callback_query.message.reply_text(
-        "📌 Escolha seu plano:",
-        reply_markup=InlineKeyboardMarkup(teclado)
+        "📌 *Escolha seu plano:*",
+        reply_markup=InlineKeyboardMarkup(teclado),
+        parse_mode="Markdown"
     )
 
 # =========================
-# CRIAR PIX
+# GERAR PIX
 # =========================
 def criar_pix(valor, descricao):
-    url = "https://api.mercadopago.com/v1/payments"
     headers = {
         "Authorization": f"Bearer {MP_ACCESS_TOKEN}",
         "Content-Type": "application/json",
-        "X-Idempotency-Key": descricao
+        "X-Idempotency-Key": str(uuid.uuid4())
     }
 
     data = {
         "transaction_amount": valor,
         "description": descricao,
         "payment_method_id": "pix",
-        "payer": {"email": "cliente@telegram.com"}
+        "payer": {
+            "email": "cliente@telegram.com"
+        }
     }
 
-    return requests.post(url, json=data, headers=headers).json()
+    response = requests.post(
+        "https://api.mercadopago.com/v1/payments",
+        headers=headers,
+        json=data
+    )
 
-# =========================
-# VERIFICAR PAGAMENTO
-# =========================
-def verificar_pagamento(payment_id):
-    url = f"https://api.mercadopago.com/v1/payments/{payment_id}"
-    headers = {"Authorization": f"Bearer {MP_ACCESS_TOKEN}"}
-    return requests.get(url, headers=headers).json()
+    return response.json()
 
 # =========================
 # CALLBACK PLANOS
@@ -72,63 +101,63 @@ async def callback_planos(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
-    planos = {
-        "vip_1": (24.90, "VIP 1 Mês"),
-        "vip_3": (64.90, "VIP 3 Meses"),
-        "vip_v": (149.90, "VIP Vitalício")
-    }
+    if query.data == "vip_1m":
+        valor, plano = 24.90, "VIP 1 Mês"
+    elif query.data == "vip_3m":
+        valor, plano = 64.90, "VIP 3 Meses"
+    elif query.data == "vip_vitalicio":
+        valor, plano = 149.90, "VIP Vitalício"
+    else:
+        return
 
-    valor, nome = planos[query.data]
+    pagamento = criar_pix(valor, plano)
 
-    pagamento = criar_pix(valor, nome)
-    payment_id = pagamento["id"]
+    try:
+        pix = pagamento["point_of_interaction"]["transaction_data"]["qr_code"]
+        payment_id = pagamento["id"]
 
-    context.user_data["payment_id"] = payment_id
+        pagamentos = carregar_pagamentos()
+        pagamentos[str(query.from_user.id)] = {
+            "plano": plano,
+            "valor": valor,
+            "payment_id": payment_id,
+            "status": "pending"
+        }
+        salvar_pagamentos(pagamentos)
 
-    pix = pagamento["point_of_interaction"]["transaction_data"]["qr_code"]
+        await query.message.reply_text(
+            f"💳 *Pagamento PIX*\n\n"
+            f"📌 Plano: {plano}\n"
+            f"💰 Valor: R${valor}\n\n"
+            f"`{pix}`\n\n"
+            f"⏳ Status: *PENDENTE*\n"
+            f"_(liberação automática será ativada depois)_",
+            parse_mode="Markdown"
+        )
 
-    teclado = [
-        [InlineKeyboardButton("✅ Já paguei", callback_data="confirmar_pagamento")]
-    ]
-
-    await query.message.reply_text(
-        f"💳 *Pagamento PIX*\n\n"
-        f"Plano: {nome}\n"
-        f"Valor: R${valor}\n\n"
-        f"`{pix}`",
-        reply_markup=InlineKeyboardMarkup(teclado),
-        parse_mode="Markdown"
-    )
+    except Exception as e:
+        await query.message.reply_text(
+            f"❌ Erro ao gerar Pix.\n\n{pagamento}",
+            parse_mode="Markdown"
+        )
 
 # =========================
-# CONFIRMAR PAGAMENTO
+# MENU CALLBACK
 # =========================
-async def confirmar_pagamento(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
-    payment_id = context.user_data.get("payment_id")
+    if query.data == "menu_planos":
+        await mostrar_planos(update, context)
 
-    if not payment_id:
-        await query.message.reply_text("❌ Nenhum pagamento encontrado.")
-        return
-
-    status = verificar_pagamento(payment_id)["status"]
-
-    if status == "approved":
-        invite = await context.bot.create_chat_invite_link(
-            chat_id=VIP_GROUP_ID,
-            member_limit=1
-        )
-
+    elif query.data == "menu_ajuda":
         await query.message.reply_text(
-            f"✅ *Pagamento aprovado!*\n\n"
-            f"🔗 Link VIP:\n{invite.invite_link}",
+            "ℹ️ *Ajuda*\n\n"
+            "• Escolha um plano\n"
+            "• PIX será gerado\n"
+            "• Liberação automática em breve",
             parse_mode="Markdown"
-        )
-    else:
-        await query.message.reply_text(
-            f"⏳ Pagamento ainda não aprovado.\nStatus: {status}"
         )
 
 # =========================
@@ -138,11 +167,10 @@ def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CallbackQueryHandler(mostrar_planos, pattern="planos"))
-    app.add_handler(CallbackQueryHandler(callback_planos, pattern="vip_"))
-    app.add_handler(CallbackQueryHandler(confirmar_pagamento, pattern="confirmar_pagamento"))
+    app.add_handler(CallbackQueryHandler(callback_planos, pattern="^vip_"))
+    app.add_handler(CallbackQueryHandler(menu_callback))
 
-    print("🤖 Bot rodando...")
+    print("🤖 Bot rodando com JSON...")
     app.run_polling()
 
 if __name__ == "__main__":
