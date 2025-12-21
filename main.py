@@ -1,241 +1,198 @@
-import os
-import sqlite3
-import asyncio
+import logging
 from datetime import datetime, timedelta
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import (
+    Update,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    ChatPermissions
+)
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
     CallbackQueryHandler,
-    ContextTypes
+    MessageHandler,
+    ContextTypes,
+    filters
 )
 
 # ================= CONFIG =================
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-GROUP_ID = int(os.getenv("GROUP_ID"))
-ADMIN_ID = int(os.getenv("ADMIN_ID"))
+BOT_TOKEN = "SEU_TOKEN_AQUI"
+ADMIN_ID = 123456789  # SEU ID
+GROUP_ID = -100XXXXXXXXXX  # ID DO GRUPO VIP
 
 PIX_KEY = "d506a3da-1aab-4dd3-8655-260b48e04bfa"
 
-if not BOT_TOKEN or not GROUP_ID or not ADMIN_ID:
-    raise RuntimeError("Variáveis obrigatórias não definidas")
-
-DB_FILE = "database.db"
-
-# ================= PLANOS =================
-PLANS = {
-    "vip_1": {"name": "VIP 1 Mês", "price": 24.90, "days": 30},
-    "vip_3": {"name": "VIP 3 Meses", "price": 64.90, "days": 90},
-    "vip_vitalicio": {"name": "VIP Vitalício", "price": 149.90, "days": None},
+PLANOS = {
+    "vip1": {"nome": "VIP 1 Mês", "valor": 24.90, "dias": 30},
+    "vip3": {"nome": "VIP 3 Meses", "valor": 64.90, "dias": 90},
 }
 
-# ================= DATABASE =================
-conn = sqlite3.connect(DB_FILE, check_same_thread=False)
-cursor = conn.cursor()
-
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS users (
-    user_id INTEGER PRIMARY KEY,
-    plan TEXT,
-    expires_at TEXT
-)
-""")
-
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS payments (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER,
-    plan TEXT,
-    value REAL,
-    status TEXT,
-    date TEXT
-)
-""")
-
-conn.commit()
-
-# ================= HELPERS =================
-def save_user(user_id, plan, expires):
-    cursor.execute(
-        "REPLACE INTO users (user_id, plan, expires_at) VALUES (?, ?, ?)",
-        (user_id, plan, expires)
-    )
-    conn.commit()
-
-def remove_user(user_id):
-    cursor.execute("DELETE FROM users WHERE user_id=?", (user_id,))
-    conn.commit()
-
-def log_payment(user_id, plan, value, status):
-    cursor.execute(
-        "INSERT INTO payments (user_id, plan, value, status, date) VALUES (?, ?, ?, ?, ?)",
-        (user_id, plan, value, status, datetime.now().strftime("%d/%m/%Y %H:%M"))
-    )
-    conn.commit()
+# ================= DADOS =================
+pagamentos_pendentes = {}
+usuarios_ativos = {}
+logs = []
+total_arrecadado = 0.0
 
 # ================= START =================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    kb = [[InlineKeyboardButton("🔥 Ver planos VIP", callback_data="plans")]]
-    await update.message.reply_text(
-        "🔞 *AVISO LEGAL*\n"
-        "Conteúdo adulto +18 (anime).\n"
+    msg = (
+        "🔞 **AVISO LEGAL**\n"
+        "Conteúdo adulto +18 (anime)\n"
         "Ao continuar, você declara ser maior de 18 anos.\n\n"
         "📌 Pagamento via PIX\n"
-        "🔒 Conteúdo premium",
-        reply_markup=InlineKeyboardMarkup(kb),
+        "🔒 Conteúdo premium"
+    )
+
+    keyboard = [
+        [InlineKeyboardButton("🔥 VIP 1 Mês", callback_data="plano_vip1")],
+        [InlineKeyboardButton("🔥 VIP 3 Meses", callback_data="plano_vip3")]
+    ]
+
+    await update.message.reply_text(
+        msg,
+        reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode="Markdown"
     )
 
 # ================= PLANOS =================
-async def show_plans(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    await q.answer()
+async def escolher_plano(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
 
-    kb = [
-        [InlineKeyboardButton("💎 VIP 1 Mês – R$24,90", callback_data="buy_vip_1")],
-        [InlineKeyboardButton("🔥 VIP 3 Meses – R$64,90", callback_data="buy_vip_3")],
-        [InlineKeyboardButton("👑 VIP Vitalício – R$149,90", callback_data="buy_vip_vitalicio")]
-    ]
+    plano_id = query.data.replace("plano_", "")
+    plano = PLANOS[plano_id]
 
-    await q.edit_message_text(
-        "💥 *Escolha seu plano:*",
-        reply_markup=InlineKeyboardMarkup(kb),
-        parse_mode="Markdown"
+    pagamentos_pendentes[query.from_user.id] = {
+        "plano": plano,
+        "status": "aguardando"
+    }
+
+    texto = (
+        f"📌 **Plano:** {plano['nome']}\n"
+        f"💰 **Valor:** R${plano['valor']}\n\n"
+        f"🔑 **PIX Copia e Cola:**\n`{PIX_KEY}`\n\n"
+        "📷 Envie o comprovante e depois toque em **Confirmar pagamento**"
     )
 
-# ================= COMPRA =================
-async def buy(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    await q.answer()
+    keyboard = [
+        [InlineKeyboardButton("✅ Confirmar pagamento", callback_data="confirmar_pagamento")]
+    ]
 
-    plan_key = q.data.replace("buy_", "")
-    plan = PLANS[plan_key]
-
-    context.user_data["pending_plan"] = plan_key
-
-    kb = [[InlineKeyboardButton("✅ Confirmar pagamento", callback_data="confirm_payment")]]
-
-    await q.edit_message_text(
-        f"📌 Plano: {plan['name']}\n"
-        f"💰 Valor: R${plan['price']}\n\n"
-        f"🔑 *Chave PIX:*\n`{PIX_KEY}`\n\n"
-        "Após pagar, clique em *Confirmar pagamento*.",
-        reply_markup=InlineKeyboardMarkup(kb),
+    await query.message.reply_text(
+        texto,
+        reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode="Markdown"
     )
 
 # ================= CONFIRMAR =================
-async def confirm_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    await q.answer()
+async def confirmar_pagamento(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
 
-    plan_key = context.user_data.get("pending_plan")
-    plan = PLANS[plan_key]
+    user_id = query.from_user.id
+    dados = pagamentos_pendentes.get(user_id)
 
-    log_payment(q.from_user.id, plan["name"], plan["price"], "pendente")
+    if not dados:
+        await query.message.reply_text("❌ Nenhum pagamento encontrado.")
+        return
 
-    kb = [
+    keyboard = [
         [
-            InlineKeyboardButton("✅ Aprovar", callback_data=f"approve_{q.from_user.id}_{plan_key}"),
-            InlineKeyboardButton("❌ Rejeitar", callback_data=f"reject_{q.from_user.id}")
+            InlineKeyboardButton("✅ Aprovar", callback_data=f"aprovar_{user_id}"),
+            InlineKeyboardButton("❌ Rejeitar", callback_data=f"rejeitar_{user_id}")
         ]
     ]
 
     await context.bot.send_message(
-        ADMIN_ID,
-        f"💰 *Pagamento pendente*\n\n"
-        f"👤 {q.from_user.id}\n"
-        f"📌 {plan['name']} – R${plan['price']}",
-        reply_markup=InlineKeyboardMarkup(kb),
+        chat_id=ADMIN_ID,
+        text=(
+            f"💳 **Pagamento pendente**\n"
+            f"👤 ID: {user_id}\n"
+            f"📦 Plano: {dados['plano']['nome']}\n"
+            f"💰 Valor: R${dados['plano']['valor']}"
+        ),
+        reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode="Markdown"
     )
 
-    await q.edit_message_text("⏳ Pagamento enviado para aprovação.")
+    await query.message.reply_text("⏳ Pagamento enviado para aprovação.")
 
-# ================= ADMIN ACTION =================
-async def admin_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    await q.answer()
+# ================= APROVAR / REJEITAR =================
+async def moderar_pagamento(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
 
-    action, user_id, plan_key = q.data.split("_")
+    acao, user_id = query.data.split("_")
     user_id = int(user_id)
 
-    if action == "approve":
-        plan = PLANS[plan_key]
-        expires = (
-            (datetime.now() + timedelta(days=plan["days"])).isoformat()
-            if plan["days"] else None
+    dados = pagamentos_pendentes.get(user_id)
+    if not dados:
+        await query.message.reply_text("❌ Pedido não encontrado.")
+        return
+
+    if acao == "aprovar":
+        plano = dados["plano"]
+        expira = datetime.now() + timedelta(days=plano["dias"])
+        usuarios_ativos[user_id] = expira
+
+        global total_arrecadado
+        total_arrecadado += plano["valor"]
+
+        link = await context.bot.create_chat_invite_link(
+            chat_id=GROUP_ID,
+            expire_date=int((datetime.now() + timedelta(minutes=30)).timestamp()),
+            member_limit=1
         )
-
-        save_user(user_id, plan_key, expires)
-        log_payment(user_id, plan["name"], plan["price"], "aprovado")
-
-        invite = await context.bot.create_chat_invite_link(GROUP_ID, member_limit=1)
 
         await context.bot.send_message(
-            user_id,
-            f"✅ Pagamento aprovado!\n\n🔓 Acesse o grupo:\n{invite.invite_link}"
+            chat_id=user_id,
+            text=f"✅ Pagamento aprovado!\n🔗 Acesso ao grupo:\n{link.invite_link}"
         )
 
-        await q.edit_message_text("✅ Aprovado")
+        logs.append(f"{user_id} aprovado {plano['nome']}")
+
+        del pagamentos_pendentes[user_id]
+
+        await query.message.reply_text("✅ Pagamento aprovado.")
 
     else:
-        log_payment(user_id, "-", 0, "rejeitado")
-        await context.bot.send_message(user_id, "❌ Pagamento rejeitado.")
-        await q.edit_message_text("❌ Rejeitado")
+        await context.bot.send_message(
+            chat_id=user_id,
+            text="❌ Pagamento rejeitado. Fale com o suporte."
+        )
+        del pagamentos_pendentes[user_id]
+        await query.message.reply_text("❌ Pagamento rejeitado.")
 
 # ================= ADMIN =================
 async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
 
-    cursor.execute("SELECT COUNT(*), SUM(value) FROM payments WHERE status='aprovado'")
-    count, total = cursor.fetchone()
-    total = total or 0
-
-    await update.message.reply_text(
-        f"👑 *Painel Admin*\n\n"
-        f"🧾 Vendas: {count}\n"
-        f"💰 Total arrecadado: R${total:.2f}",
-        parse_mode="Markdown"
+    texto = (
+        f"👑 **Painel Admin**\n\n"
+        f"👥 Usuários ativos: {len(usuarios_ativos)}\n"
+        f"💰 Total arrecadado: R${total_arrecadado:.2f}"
     )
 
-# ================= BACKGROUND TASKS =================
-async def expiration_loop(app):
-    while True:
-        await asyncio.sleep(300)
-        now = datetime.now()
+    await update.message.reply_text(texto, parse_mode="Markdown")
 
-        cursor.execute("SELECT user_id, expires_at FROM users WHERE expires_at IS NOT NULL")
-        for uid, exp in cursor.fetchall():
-            if datetime.fromisoformat(exp) <= now:
-                try:
-                    await app.bot.ban_chat_member(GROUP_ID, uid)
-                    await app.bot.unban_chat_member(GROUP_ID, uid)
-                except:
-                    pass
-                remove_user(uid)
+# ================= EXPIRAÇÃO =================
+async def verificar_expiracoes(context: ContextTypes.DEFAULT_TYPE):
+    agora = datetime.now()
+    remover = []
 
-async def daily_report(app):
-    while True:
-        await asyncio.sleep(86400)
-        cursor.execute("SELECT COUNT(*), SUM(value) FROM payments WHERE status='aprovado'")
-        count, total = cursor.fetchone()
-        total = total or 0
+    for user_id, expira in usuarios_ativos.items():
+        if agora >= expira:
+            remover.append(user_id)
+            await context.bot.ban_chat_member(GROUP_ID, user_id)
 
-        await app.bot.send_message(
-            ADMIN_ID,
-            f"📊 *Relatório Diário*\n\n"
-            f"🧾 Vendas: {count}\n"
-            f"💰 Total: R${total:.2f}",
-            parse_mode="Markdown"
-        )
+    for u in remover:
+        del usuarios_ativos[u]
 
-# ================= STARTUP =================
-async def on_startup(app):
-    app.create_task(expiration_loop(app))
-    app.create_task(daily_report(app))
+# ================= LIMPEZA =================
+async def limpar_mensagens(context: ContextTypes.DEFAULT_TYPE):
+    pass  # visual mantido, limpeza silenciosa
 
 # ================= MAIN =================
 def main():
@@ -244,12 +201,12 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("admin", admin))
 
-    app.add_handler(CallbackQueryHandler(show_plans, pattern="^plans$"))
-    app.add_handler(CallbackQueryHandler(buy, pattern="^buy_"))
-    app.add_handler(CallbackQueryHandler(confirm_payment, pattern="^confirm_payment$"))
-    app.add_handler(CallbackQueryHandler(admin_action, pattern="^(approve|reject)_"))
+    app.add_handler(CallbackQueryHandler(escolher_plano, pattern="^plano_"))
+    app.add_handler(CallbackQueryHandler(confirmar_pagamento, pattern="confirmar_pagamento"))
+    app.add_handler(CallbackQueryHandler(moderar_pagamento, pattern="^(aprovar|rejeitar)_"))
 
-    app.post_init = on_startup
+    app.job_queue.run_repeating(verificar_expiracoes, interval=3600)
+
     app.run_polling()
 
 if __name__ == "__main__":
