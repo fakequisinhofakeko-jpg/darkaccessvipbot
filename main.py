@@ -7,8 +7,8 @@ from telegram.ext import (
 )
 
 # ================= CONFIG =================
-BOT_TOKEN = "COLE_SEU_TOKEN_AQUI"
-ADMIN_ID = 123456789
+BOT_TOKEN = "8444138111:AAGuhgOzBtMsrNRQ1Zj2_pKuquMXi7jcHGo"
+ADMIN_ID = 1208316553
 GROUP_ID = -1003513694224
 PIX_KEY = "d506a3da-1aab-4dd3-8655-260b48e04bfa"
 
@@ -72,7 +72,7 @@ async def escolher_plano(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
 
-# ================= CONFIRMAR PAGAMENTO =================
+# ================= CONFIRMAR =================
 async def confirmar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
@@ -158,16 +158,12 @@ async def admin_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if q.data == "admin_usuarios":
         texto = f"👥 Usuários ativos: {len(usuarios_ativos)}"
-
     elif q.data == "admin_pendentes":
         texto = f"⏳ Pagamentos pendentes: {len(pagamentos_pendentes)}"
-
     elif q.data == "admin_aprovados":
         texto = f"✅ Pagamentos aprovados: {len(usuarios_ativos)}"
-
     elif q.data == "admin_total":
         texto = f"💰 Total arrecadado: R${total_arrecadado:.2f}"
-
     else:
         texto = "❌ Opção inválida."
 
@@ -180,10 +176,10 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("admin", admin))
 
-    app.add_handler(CallbackQueryHandler(escolher_plano, pattern="^plano_"))
-    app.add_handler(CallbackQueryHandler(confirmar, pattern="^confirmar$"))
-    app.add_handler(CallbackQueryHandler(moderar, pattern="^(aprovar|rejeitar)_"))
     app.add_handler(CallbackQueryHandler(admin_callbacks, pattern="^admin_"))
+    app.add_handler(CallbackQueryHandler(moderar, pattern="^(aprovar|rejeitar)_"))
+    app.add_handler(CallbackQueryHandler(confirmar, pattern="^confirmar$"))
+    app.add_handler(CallbackQueryHandler(escolher_plano, pattern="^plano_"))
 
     app.run_polling()
 
