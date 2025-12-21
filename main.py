@@ -30,22 +30,44 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 # ---------- PLANOS ----------
-async def show_plans(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def buy_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
+    plan_key = query.data.replace("buy_", "")
+    plan = PLANS[plan_key]
+
+    payment = create_pix(plan_key, query.from_user.id)
+
+    # 🔴 VALIDAÇÃO OBRIGATÓRIA
+    try:
+        pix_code = payment["point_of_interaction"]["transaction_data"]["qr_code"]
+        payment_id = payment["id"]
+    except KeyError:
+        await query.edit_message_text(
+            "❌ *Erro ao gerar o PIX.*\n\n"
+            "Tente novamente em alguns segundos.",
+            parse_mode="Markdown"
+        )
+        return
+
+    context.user_data["payment_id"] = payment_id
+    context.user_data["plan"] = plan_key
+
     keyboard = [
-        [InlineKeyboardButton("💎 1 Mês - R$24,90", callback_data="buy_vip_1")],
-        [InlineKeyboardButton("🔥 3 Meses - R$64,90", callback_data="buy_vip_3")],
-        [InlineKeyboardButton("👑 Vitalício - R$149,90", callback_data="buy_vip_vitalicio")]
+        [InlineKeyboardButton("🔄 Verificar pagamento", callback_data="check_payment")]
     ]
 
     await query.edit_message_text(
-        "📌 *Escolha seu plano:*",
+        f"💳 *Pagamento PIX*\n\n"
+        f"📌 Plano: {plan['name']}\n"
+        f"💰 Valor: R${plan['price']}\n\n"
+        f"🔑 *Pix Copia e Cola:*\n"
+        f"`{pix_code}`\n\n"
+        f"⚠️ Após pagar, clique em *Verificar pagamento*.",
         reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode="Markdown"
     )
-
 # ---------- CRIAR PIX ----------
 def create_pix(plan_key, user_id):
     plan = PLANS[plan_key]
