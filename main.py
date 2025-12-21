@@ -1,94 +1,84 @@
 import os
+import time
 import uuid
 import requests
-from datetime import datetime, timedelta
-from fastapi import FastAPI, Request, Header
-from telegram import Bot
-from telegram.ext import ApplicationBuilder, CommandHandler
-import threading
-import uvicorn
+from flask import Flask, request
+from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-MP_ACCESS_TOKEN = os.getenv("MP_ACCESS_TOKEN")
-WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET")
-GRUPO_VIP_ID = -1003513694224
+MP_TOKEN = os.getenv("MP_ACCESS_TOKEN")
+GROUP_ID = int(os.getenv("GROUP_ID"))
 
-bot = Bot(BOT_TOKEN)
-app = FastAPI()
+bot = Bot(token=BOT_TOKEN)
+app = Flask(__name__)
 
-# memória simples (etapa 5 vira banco)
-pagamentos = {}
+payments = {}
 
-# ======================
-# BOT START
-# ======================
-async def start(update, context):
-    await update.message.reply_text(
-        "🔥 Dark Access VIP\n\n"
-        "Escolha um plano e pague.\n"
-        "O acesso é liberado automaticamente."
-    )
+# =====================
+# CRIAR PIX
+# =====================
+def criar_pix(user_id, valor):
+    payment_id = str(uuid.uuid4())
 
-# ======================
-# WEBHOOK MERCADO PAGO
-# ======================
-@app.post("/webhook")
-async def mercado_pago_webhook(
-    request: Request,
-    x_signature: str = Header(None)
-):
-    data = await request.json()
+    url = "https://api.mercadopago.com/v1/payments"
+    headers = {
+        "Authorization": f"Bearer {MP_TOKEN}",
+        "Content-Type": "application/json"
+    }
 
-    if x_signature != WEBHOOK_SECRET:
-        return {"error": "unauthorized"}
+    data = {
+        "transaction_amount": valor,
+        "description": "Acesso VIP",
+        "payment_method_id": "pix",
+        "payer": {
+            "email": f"user{user_id}@vipbot.com"
+        }
+    }
 
-    if data.get("type") != "payment":
-        return {"status": "ignored"}
+    r = requests.post(url, json=data, headers=headers).json()
 
-    payment_id = data["data"]["id"]
+    payments[r["id"]] = user_id
 
-    headers = {"Authorization": f"Bearer {MP_ACCESS_TOKEN}"}
-    payment = requests.get(
-        f"https://api.mercadopago.com/v1/payments/{payment_id}",
-        headers=headers
-    ).json()
+    return r["point_of_interaction"]["transaction_data"]["qr_code"]
 
-    if payment.get("status") != "approved":
-        return {"status": "pending"}
+# =====================
+# WEBHOOK
+# =====================
+@app.route("/webhook", methods=["POST"])
+def webhook():
+    data = request.json
 
-    external_reference = payment.get("external_reference")
-    if not external_reference:
-        return {"error": "no user"}
+    if data.get("type") == "payment":
+        payment_id = data["data"]["id"]
 
-    user_id = int(external_reference)
+        headers = {"Authorization": f"Bearer {MP_TOKEN}"}
+        payment = requests.get(
+            f"https://api.mercadopago.com/v1/payments/{payment_id}",
+            headers=headers
+        ).json()
 
-    link = await bot.create_chat_invite_link(
-        chat_id=GRUPO_VIP_ID,
-        member_limit=1
-    )
+        if payment["status"] == "approved":
+            user_id = payments.get(payment_id)
 
-    await bot.send_message(
-        chat_id=user_id,
-        text=(
-            "✅ *Pagamento aprovado!*\n\n"
-            f"🔓 Link de acesso:\n{link.invite_link}"
-        ),
-        parse_mode="Markdown"
-    )
+            if user_id:
+                link = bot.create_chat_invite_link(
+                    chat_id=GROUP_ID,
+                    expire_date=int(time.time()) + 3600
+                )
 
-    return {"status": "ok"}
+                bot.send_message(
+                    chat_id=user_id,
+                    text=f"✅ Pagamento confirmado!\n\n🔗 Acesse o grupo:\n{link.invite_link}"
+                )
 
-# ======================
-# BOT + API JUNTOS
-# ======================
-def run_bot():
-    app_bot = ApplicationBuilder().token(BOT_TOKEN).build()
-    app_bot.add_handler(CommandHandler("start", start))
-    app_bot.run_polling()
+    return "ok"
 
-def run_api():
-    uvicorn.run(app, host="0.0.0.0", port=8080)
+# =====================
+# START
+# =====================
+@app.route("/")
+def home():
+    return "Bot ativo"
 
 if __name__ == "__main__":
-    threading.Thread(target=run_bot).start()
-    run_api()
+    app.run(host="0.0.0.0", port=8080)
