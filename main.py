@@ -15,6 +15,7 @@ MP_ACCESS_TOKEN = os.getenv("MP_ACCESS_TOKEN")
 PLANS = {
     "vip_1": {"name": "VIP 1 Mês", "price": 24.90},
     "vip_3": {"name": "VIP 3 Meses", "price": 64.90},
+    "vip_vitalicio": {"name": "VIP Vitalício", "price": 149.90},
 }
 
 # ---------- START ----------
@@ -35,7 +36,8 @@ async def show_plans(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     keyboard = [
         [InlineKeyboardButton("💎 1 Mês - R$24,90", callback_data="buy_vip_1")],
-        [InlineKeyboardButton("🔥 3 Meses - R$64,90", callback_data="buy_vip_3")]
+        [InlineKeyboardButton("🔥 3 Meses - R$64,90", callback_data="buy_vip_3")],
+        [InlineKeyboardButton("👑 Vitalício - R$149,90", callback_data="buy_vip_vitalicio")]
     ]
 
     await query.edit_message_text(
@@ -75,6 +77,7 @@ async def buy_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
     payment_id = payment["id"]
 
     context.user_data["payment_id"] = payment_id
+    context.user_data["plan"] = plan_key
 
     keyboard = [
         [InlineKeyboardButton("🔄 Verificar pagamento", callback_data="check_payment")]
@@ -95,6 +98,8 @@ async def check_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
 
     payment_id = context.user_data.get("payment_id")
+    plan_key = context.user_data.get("plan")
+
     if not payment_id:
         await query.edit_message_text("❌ Nenhum pagamento encontrado.")
         return
@@ -108,7 +113,7 @@ async def check_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if status == "approved":
         await context.bot.send_message(
             chat_id=GROUP_ID,
-            text=f"✅ Novo membro aprovado: @{query.from_user.username or query.from_user.id}"
+            text=f"✅ Novo acesso aprovado\nPlano: {PLANS[plan_key]['name']}\nUsuário: @{query.from_user.username or query.from_user.id}"
         )
         await query.edit_message_text(
             "✅ *Pagamento aprovado!*\n\nAcesso liberado.",
