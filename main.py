@@ -22,6 +22,8 @@ MP_ACCESS_TOKEN = os.getenv("MP_ACCESS_TOKEN")
 MP_API = "https://api.mercadopago.com/v1/payments"
 DB_FILE = "database.db"
 
+app_instance = None  # usado para log automático do admin
+
 # ================= PLANOS =================
 PLANS = {
     "vip_1": {"name": "VIP 1 Mês", "price": 24.90, "days": 30},
@@ -76,6 +78,27 @@ def log_payment(user_id, username, plan, value):
         (user_id, username, plan, value, datetime.now().strftime("%d/%m/%Y %H:%M"))
     )
     conn.commit()
+
+# ================= LOG AUTOMÁTICO ADMIN =================
+async def notify_admin_payment(user, plan_name, value):
+    try:
+        username = f"@{user.username}" if user.username else f"ID {user.id}"
+
+        message = (
+            "💰 *PAGAMENTO APROVADO*\n\n"
+            f"👤 Usuário: {username}\n"
+            f"📦 Plano: {plan_name}\n"
+            f"💵 Valor: R${value}\n"
+            f"📅 Data: {datetime.now().strftime('%d/%m/%Y %H:%M')}"
+        )
+
+        await app_instance.bot.send_message(
+            chat_id=ADMIN_ID,
+            text=message,
+            parse_mode="Markdown"
+        )
+    except Exception as e:
+        print("Erro ao enviar log para admin:", e)
 
 # ================= START =================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -196,6 +219,8 @@ async def check_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
         save_user(q.from_user.id, plan_key, expires)
         log_payment(q.from_user.id, q.from_user.username, plan["name"], plan["price"])
 
+        await notify_admin_payment(q.from_user, plan["name"], plan["price"])
+
         invite = await context.bot.create_chat_invite_link(GROUP_ID, member_limit=1)
 
         await q.edit_message_text(
@@ -206,7 +231,7 @@ async def check_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await q.edit_message_text("⏳ Pagamento ainda não aprovado.")
 
-# ================= BACKGROUND TASKS =================
+# ================= BACKGROUND =================
 async def expiration_loop(app):
     while True:
         await asyncio.sleep(300)
@@ -297,7 +322,9 @@ async def admin_logs(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ================= MAIN =================
 def main():
+    global app_instance
     app = ApplicationBuilder().token(BOT_TOKEN).post_init(post_init).build()
+    app_instance = app
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("admin", admin))
