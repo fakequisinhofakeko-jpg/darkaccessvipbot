@@ -5,27 +5,21 @@ import requests
 from datetime import datetime, timedelta
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import (
-    ApplicationBuilder,
-    CommandHandler,
-    CallbackQueryHandler,
-    ContextTypes
-)
+from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
 
-# ================= VARIÁVEIS =================
+# ================== VARIÁVEIS ==================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 GROUP_ID = int(os.getenv("GROUP_ID"))
 MP_ACCESS_TOKEN = os.getenv("MP_ACCESS_TOKEN")
-ADMIN_ID = int(os.getenv("ADMIN_ID"))
 
-# ================= PLANOS =================
+# ================== PLANOS ==================
 PLANS = {
     "vip_1": {"name": "VIP 1 Mês", "price": 24.90, "days": 30},
     "vip_3": {"name": "VIP 3 Meses", "price": 64.90, "days": 90},
     "vip_vitalicio": {"name": "VIP Vitalício", "price": 149.90, "days": None},
 }
 
-# ================= START =================
+# ================== START ==================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [[InlineKeyboardButton("📌 Ver planos", callback_data="plans")]]
     await update.message.reply_text(
@@ -34,25 +28,25 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
 
-# ================= MOSTRAR PLANOS =================
+# ================== PLANOS ==================
 async def show_plans(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
+    q = update.callback_query
+    await q.answer()
 
     keyboard = [
-        [InlineKeyboardButton("💎 VIP 1 Mês – R$24,90", callback_data="buy_vip_1")],
-        [InlineKeyboardButton("🔥 VIP 3 Meses – R$64,90", callback_data="buy_vip_3")],
-        [InlineKeyboardButton("👑 VIP Vitalício – R$149,90", callback_data="buy_vip_vitalicio")]
+        [InlineKeyboardButton("💎 VIP 1 Mês – R$24,90", callback_data="vip_1")],
+        [InlineKeyboardButton("🔥 VIP 3 Meses – R$64,90", callback_data="vip_3")],
+        [InlineKeyboardButton("👑 VIP Vitalício – R$149,90", callback_data="vip_vitalicio")]
     ]
 
-    await query.message.reply_text(
+    await q.edit_message_text(
         "📌 *Escolha seu plano:*",
         reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode="Markdown"
     )
 
-# ================= PIX =================
-def create_pix(plan_key, user_id):
+# ================== PIX ==================
+def criar_pix(plan_key, user_id):
     plan = PLANS[plan_key]
 
     headers = {
@@ -62,24 +56,17 @@ def create_pix(plan_key, user_id):
     }
 
     data = {
-        "transaction_amount": float(plan["price"]),
+        "transaction_amount": plan["price"],
         "description": plan["name"],
         "payment_method_id": "pix",
-        "payer": {
-            "email": f"user{user_id}@darkaccessvip.com"
-        }
+        "payer": {"email": f"user{user_id}@vip.com"}
     }
 
-    response = requests.post(
-        "https://api.mercadopago.com/v1/payments",
-        headers=headers,
-        json=data
-    )
+    r = requests.post("https://api.mercadopago.com/v1/payments", json=data, headers=headers)
+    return r.json()
 
-    return response.json()
-
-# ================= CARTÃO (CHECKOUT PRO) =================
-def create_card_payment(plan_key):
+# ================== LINK CARTÃO ==================
+def criar_link_cartao(plan_key):
     plan = PLANS[plan_key]
 
     headers = {
@@ -88,208 +75,80 @@ def create_card_payment(plan_key):
     }
 
     data = {
-        "items": [
-            {
-                "title": plan["name"],
-                "quantity": 1,
-                "currency_id": "BRL",
-                "unit_price": float(plan["price"])
-            }
-        ],
+        "items": [{
+            "title": plan["name"],
+            "quantity": 1,
+            "unit_price": plan["price"]
+        }],
+        "back_urls": {
+            "success": "https://t.me/seu_bot",
+            "failure": "https://t.me/seu_bot"
+        },
         "auto_return": "approved"
     }
 
-    response = requests.post(
-        "https://api.mercadopago.com/checkout/preferences",
-        headers=headers,
-        json=data
-    )
+    r = requests.post("https://api.mercadopago.com/checkout/preferences", json=data, headers=headers)
+    return r.json()["init_point"]
 
-    return response.json()
+# ================== ESCOLHA PAGAMENTO ==================
+async def escolher_pagamento(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
 
-# ================= COMPRAR =================
-async def buy_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-
-    plan_key = query.data.replace("buy_", "")
-    plan = PLANS[plan_key]
-
-    payment = create_pix(plan_key, query.from_user.id)
-
-    try:
-        pix_code = payment["point_of_interaction"]["transaction_data"]["qr_code"]
-        payment_id = payment["id"]
-    except Exception:
-        await query.message.reply_text("❌ Erro ao gerar o PIX.")
-        return
-
-    context.user_data["payment_id"] = payment_id
+    plan_key = q.data
     context.user_data["plan"] = plan_key
 
+    pix = criar_pix(plan_key, q.from_user.id)
+    pix_code = pix["point_of_interaction"]["transaction_data"]["qr_code"]
+    payment_id = pix["id"]
+
+    context.user_data["payment_id"] = payment_id
+
+    link_cartao = criar_link_cartao(plan_key)
+
     keyboard = [
-        [InlineKeyboardButton("💳 Pagar no cartão", callback_data=f"card_{plan_key}")],
-        [InlineKeyboardButton("🔄 Verificar pagamento (PIX)", callback_data="check_payment")]
+        [InlineKeyboardButton("💳 Pagar com Cartão", url=link_cartao)],
+        [InlineKeyboardButton("🔄 Verificar PIX", callback_data="check_pix")]
     ]
 
-    await query.message.reply_text(
-        f"💳 *Pagamento PIX*\n\n"
-        f"📌 Plano: {plan['name']}\n"
-        f"💰 Valor: R${plan['price']}\n\n"
-        f"🔑 *Pix Copia e Cola:*\n`{pix_code}`",
+    await q.edit_message_text(
+        f"💰 *{PLANS[plan_key]['name']}*\n"
+        f"💵 R$ {PLANS[plan_key]['price']}\n\n"
+        f"🔑 *PIX Copia e Cola:*\n`{pix_code}`",
         reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode="Markdown"
     )
 
-# ================= CARTÃO CALLBACK =================
-async def card_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-
-    plan_key = query.data.replace("card_", "")
-    payment = create_card_payment(plan_key)
-
-    try:
-        link = payment["init_point"]
-    except KeyError:
-        await query.message.reply_text("❌ Erro ao gerar pagamento por cartão.")
-        return
-
-    await query.message.reply_text(
-        "💳 *Pagamento por cartão*\n\n"
-        f"Clique para pagar:\n{link}",
-        parse_mode="Markdown"
-    )
-
-# ================= VERIFICAR PIX =================
-async def check_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
+# ================== VERIFICAR PIX ==================
+async def check_pix(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
 
     payment_id = context.user_data.get("payment_id")
     plan_key = context.user_data.get("plan")
 
-    if not payment_id:
-        await query.message.reply_text("❌ Nenhum pagamento encontrado.")
-        return
-
-    response = requests.get(
+    r = requests.get(
         f"https://api.mercadopago.com/v1/payments/{payment_id}",
         headers={"Authorization": f"Bearer {MP_ACCESS_TOKEN}"}
     ).json()
 
-    if response.get("status") == "approved":
-        plan = PLANS[plan_key]
-
-        expires_at = (
-            datetime.now() + timedelta(days=plan["days"])
-            if plan["days"] else None
-        )
-
-        context.application.bot_data.setdefault("users", {})
-        context.application.bot_data["users"][query.from_user.id] = {
-            "expires": expires_at
-        }
-
-        invite = await context.bot.create_chat_invite_link(
-            chat_id=GROUP_ID,
-            member_limit=1
-        )
-
-        await query.message.reply_text(
-            "✅ *Pagamento aprovado!*\n\n"
-            f"🔓 Acesse o grupo VIP:\n{invite.invite_link}",
+    if r.get("status") == "approved":
+        invite = await context.bot.create_chat_invite_link(GROUP_ID, member_limit=1)
+        await q.edit_message_text(
+            f"✅ *Pagamento aprovado!*\n\n🔓 Acesse o grupo:\n{invite.invite_link}",
             parse_mode="Markdown"
         )
     else:
-        await query.message.reply_text("⏳ Pagamento ainda não aprovado.")
+        await q.edit_message_text("⏳ Pagamento ainda não aprovado.")
 
-# ================= EXPIRAÇÃO =================
-async def expiration_checker(app):
-    while True:
-        await asyncio.sleep(300)
-        now = datetime.now()
-        users = app.bot_data.get("users", {})
-
-        for user_id, data in list(users.items()):
-            expires = data["expires"]
-            if expires and now >= expires:
-                try:
-                    await app.bot.ban_chat_member(GROUP_ID, user_id)
-                    await app.bot.unban_chat_member(GROUP_ID, user_id)
-                    del users[user_id]
-                except Exception:
-                    pass
-
-# ================= STARTUP =================
-async def on_startup(app):
-    asyncio.create_task(expiration_checker(app))
-
-# ================= ADMIN =================
-async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        return
-
-    users = context.application.bot_data.get("users", {})
-    texto = (
-        "🔐 *Painel Admin*\n\n"
-        f"👥 Usuários ativos: {len(users)}\n\n"
-        "/usuarios – listar\n"
-        "/remover ID – remover\n"
-    )
-    await update.message.reply_text(texto, parse_mode="Markdown")
-
-async def usuarios(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        return
-
-    users = context.application.bot_data.get("users", {})
-    if not users:
-        await update.message.reply_text("Nenhum usuário ativo.")
-        return
-
-    texto = "👥 *Usuários VIP*\n\n"
-    for uid, data in users.items():
-        exp = data["expires"]
-        texto += f"• `{uid}` → {exp.strftime('%d/%m/%Y') if exp else 'Vitalício'}\n"
-
-    await update.message.reply_text(texto, parse_mode="Markdown")
-
-async def remover(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        return
-
-    if not context.args:
-        await update.message.reply_text("Use: /remover ID")
-        return
-
-    user_id = int(context.args[0])
-    try:
-        await context.bot.ban_chat_member(GROUP_ID, user_id)
-        await context.bot.unban_chat_member(GROUP_ID, user_id)
-        context.application.bot_data.get("users", {}).pop(user_id, None)
-        await update.message.reply_text("✅ Usuário removido.")
-    except Exception as e:
-        await update.message.reply_text(f"Erro: {e}")
-
-# ================= MAIN =================
+# ================== MAIN ==================
 def main():
-    app = (
-        ApplicationBuilder()
-        .token(BOT_TOKEN)
-        .post_init(on_startup)
-        .build()
-    )
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("admin", admin))
-    app.add_handler(CommandHandler("usuarios", usuarios))
-    app.add_handler(CommandHandler("remover", remover))
-
     app.add_handler(CallbackQueryHandler(show_plans, pattern="^plans$"))
-    app.add_handler(CallbackQueryHandler(buy_plan, pattern="^buy_"))
-    app.add_handler(CallbackQueryHandler(card_payment, pattern="^card_"))
-    app.add_handler(CallbackQueryHandler(check_payment, pattern="^check_payment$"))
+    app.add_handler(CallbackQueryHandler(escolher_pagamento, pattern="^vip_"))
+    app.add_handler(CallbackQueryHandler(check_pix, pattern="^check_pix$"))
 
     app.run_polling()
 
