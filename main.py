@@ -1,38 +1,16 @@
-import os
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
+from telegram.ext import (
+    ApplicationBuilder,
+    CommandHandler,
+    CallbackQueryHandler,
+    ContextTypes
+)
 
 # ================= CONFIG =================
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_ID = 123456789            # SEU ID
-GROUP_ID = -1003513694224       # SEU GRUPO
+BOT_TOKEN = "COLE_SEU_TOKEN_AQUI"
+ADMIN_ID = 123456789
+GROUP_ID = -1003513694224
 PIX_KEY = "d506a3da-1aab-4dd3-8655-260b48e04bfa"
-
-PLANOS = {
-    "vip1": {"nome": "VIP 1 Mês", "valor": 24.90},
-    "vip3": {"nome": "VIP 3 Meses", "valor": 64.90},
-}
-
-pagamentos_pendentes = {}
-
-# ================= START =================
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    texto = (
-        "🔞 AVISO LEGAL\n"
-        "Conteúdo adulto +18\n\n"
-        "💳 Pagamento via PIX\n"
-        "🔒 Acesso VIP"
-    )
-
-    teclado = [
-        [InlineKeyboardButton("🔥 VIP 1 Mês", callback_data="plano_vip1")],
-        [InlineKeyboardButton("🔥 VIP 3 Meses", callback_data="plano_vip3")],
-    ]
-
-    await update.message.reply_text(
-        texto,
-        reply_markup=InlineKeyboardMarkup(teclado)
-    )
 
 # ================= PLANOS =================
 PLANOS = {
@@ -41,7 +19,10 @@ PLANOS = {
     "vip_vitalicio": {"nome": "VIP Vitalício", "valor": 149.90},
 }
 
+# ================= DADOS =================
 pagamentos_pendentes = {}
+usuarios_ativos = set()
+total_arrecadado = 0.0
 
 # ================= START =================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -130,11 +111,16 @@ async def moderar(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await q.message.reply_text("❌ Pedido não encontrado.")
         return
 
+    global total_arrecadado
+
     if acao == "aprovar":
         link = await context.bot.create_chat_invite_link(
             chat_id=GROUP_ID,
             member_limit=1
         )
+
+        usuarios_ativos.add(uid)
+        total_arrecadado += plano["valor"]
 
         await context.bot.send_message(
             uid,
@@ -148,16 +134,57 @@ async def moderar(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     pagamentos_pendentes.pop(uid, None)
 
+# ================= ADMIN =================
+async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+
+    teclado = [
+        [InlineKeyboardButton("👥 Usuários ativos", callback_data="admin_usuarios")],
+        [InlineKeyboardButton("⏳ Pagamentos pendentes", callback_data="admin_pendentes")],
+        [InlineKeyboardButton("✅ Pagamentos aprovados", callback_data="admin_aprovados")],
+        [InlineKeyboardButton("💰 Total arrecadado", callback_data="admin_total")],
+    ]
+
+    await update.message.reply_text(
+        "👑 Painel Admin",
+        reply_markup=InlineKeyboardMarkup(teclado)
+    )
+
+# ================= CALLBACKS ADMIN =================
+async def admin_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+
+    if q.data == "admin_usuarios":
+        texto = f"👥 Usuários ativos: {len(usuarios_ativos)}"
+
+    elif q.data == "admin_pendentes":
+        texto = f"⏳ Pagamentos pendentes: {len(pagamentos_pendentes)}"
+
+    elif q.data == "admin_aprovados":
+        texto = f"✅ Pagamentos aprovados: {len(usuarios_ativos)}"
+
+    elif q.data == "admin_total":
+        texto = f"💰 Total arrecadado: R${total_arrecadado:.2f}"
+
+    else:
+        texto = "❌ Opção inválida."
+
+    await q.message.reply_text(texto)
+
 # ================= MAIN =================
 def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CallbackQueryHandler(escolher_plano, pattern="^plano_"))
-    app.add_handler(CallbackQueryHandler(confirmar, pattern="confirmar"))
-    app.add_handler(CallbackQueryHandler(moderar, pattern="^(aprovar|rejeitar)_"))
+    app.add_handler(CommandHandler("admin", admin))
 
-    print("🤖 BOT ONLINE")
+    app.add_handler(CallbackQueryHandler(escolher_plano, pattern="^plano_"))
+    app.add_handler(CallbackQueryHandler(confirmar, pattern="^confirmar$"))
+    app.add_handler(CallbackQueryHandler(moderar, pattern="^(aprovar|rejeitar)_"))
+    app.add_handler(CallbackQueryHandler(admin_callbacks, pattern="^admin_"))
+
     app.run_polling()
 
 if __name__ == "__main__":
