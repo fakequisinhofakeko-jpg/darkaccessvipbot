@@ -1,8 +1,17 @@
 import os
 import uuid
+import asyncio
 import requests
+import sqlite3
+from datetime import datetime, timedelta
+
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
+from telegram.ext import (
+    ApplicationBuilder,
+    CommandHandler,
+    CallbackQueryHandler,
+    ContextTypes
+)
 
 # ================= CONFIG =================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -11,21 +20,71 @@ ADMIN_ID = int(os.getenv("ADMIN_ID"))
 MP_ACCESS_TOKEN = os.getenv("MP_ACCESS_TOKEN")
 
 MP_API = "https://api.mercadopago.com/v1/payments"
+DB_FILE = "database.db"
 
+# ================= PLANOS =================
 PLANS = {
-    "vip_1": {"name": "VIP 1 Mês", "price": 24.90},
-    "vip_3": {"name": "VIP 3 Meses", "price": 64.90},
-    "vip_vitalicio": {"name": "VIP Vitalício", "price": 149.90},
+    "vip_1": {"name": "VIP 1 Mês", "price": 24.90, "days": 30},
+    "vip_3": {"name": "VIP 3 Meses", "price": 64.90, "days": 90},
+    "vip_vitalicio": {"name": "VIP Vitalício", "price": 149.90, "days": None},
 }
 
-# user_id: {"plan": "..."}
-USERS = {}
+# ================= DATABASE =================
+conn = sqlite3.connect(DB_FILE, check_same_thread=False)
+cursor = conn.cursor()
+
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS users (
+    user_id INTEGER PRIMARY KEY,
+    plan TEXT,
+    expires_at TEXT
+)
+""")
+
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    username TEXT,
+    plan TEXT,
+    value REAL,
+    date TEXT
+)
+""")
+
+conn.commit()
+
+# ================= HELPERS =================
+def get_user(user_id):
+    cursor.execute("SELECT plan, expires_at FROM users WHERE user_id=?", (user_id,))
+    return cursor.fetchone()
+
+def save_user(user_id, plan, expires):
+    cursor.execute(
+        "REPLACE INTO users (user_id, plan, expires_at) VALUES (?, ?, ?)",
+        (user_id, plan, expires)
+    )
+    conn.commit()
+
+def remove_user(user_id):
+    cursor.execute("DELETE FROM users WHERE user_id=?", (user_id,))
+    conn.commit()
+
+def log_payment(user_id, username, plan, value):
+    cursor.execute(
+        "INSERT INTO logs (user_id, username, plan, value, date) VALUES (?, ?, ?, ?, ?)",
+        (user_id, username, plan, value, datetime.now().strftime("%d/%m/%Y %H:%M"))
+    )
+    conn.commit()
 
 # ================= START =================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     kb = [[InlineKeyboardButton("🔥 Ver planos VIP", callback_data="plans")]]
     await update.message.reply_text(
-        "🚨 *ACESSO VIP EXCLUSIVO*\n\nClique abaixo:",
+        "🚨 *ACESSO VIP EXCLUSIVO*\n\n"
+        "⚡ Liberação automática\n"
+        "🔒 Conteúdo premium\n\n"
+        "👇 Clique abaixo:",
         reply_markup=InlineKeyboardMarkup(kb),
         parse_mode="Markdown"
     )
@@ -47,14 +106,16 @@ async def show_plans(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
 
-# ================= CRIAR PIX =================
+# ================= MERCADO PAGO =================
 def criar_pix(plan_key, user_id):
     plan = PLANS[plan_key]
+
     headers = {
         "Authorization": f"Bearer {MP_ACCESS_TOKEN}",
         "Content-Type": "application/json",
         "X-Idempotency-Key": str(uuid.uuid4())
     }
+
     data = {
         "transaction_amount": float(plan["price"]),
         "description": plan["name"],
@@ -64,7 +125,8 @@ def criar_pix(plan_key, user_id):
             "identification": {"type": "CPF", "number": "11111111111"}
         }
     }
-    return requests.post(MP_API, headers=headers, json=data).json()
+
+    return requests.post(MP_API, headers=headers, json=data, timeout=20).json()
 
 # ================= COMPRAR =================
 async def buy_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -74,11 +136,11 @@ async def buy_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = q.from_user.id
     plan_key = q.data.replace("buy_", "")
 
-    # 🔒 BLOQUEIO APENAS PARA COMPRA (NÃO AFETA ADMIN)
-    if user_id in USERS and USERS[user_id]["plan"] == "vip_vitalicio":
+    existing = get_user(user_id)
+    if existing and existing[0] == "vip_vitalicio":
         await q.edit_message_text(
-            "👑 *Você já possui VIP Vitalício.*\n\n"
-            "Não é necessário realizar nova compra.",
+            "👑 *Você já possui acesso VIP Vitalício.*\n\n"
+            "Seu acesso é permanente.",
             parse_mode="Markdown"
         )
         return
@@ -88,9 +150,9 @@ async def buy_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         data = pix["point_of_interaction"]["transaction_data"]
         pix_code = data["qr_code"]
-        payment_id = pix["id"]
         checkout = data.get("ticket_url")
-    except:
+        payment_id = pix["id"]
+    except Exception:
         await q.edit_message_text("❌ Erro ao gerar pagamento.")
         return
 
@@ -103,10 +165,10 @@ async def buy_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
     buttons.append([InlineKeyboardButton("🔄 Verificar pagamento", callback_data="check_payment")])
 
     await q.edit_message_text(
-        f"💳 *Pagamento PIX*\n\n"
+        f"💳 *Pagamento VIP*\n\n"
         f"📌 Plano: {PLANS[plan_key]['name']}\n"
         f"💰 Valor: R${PLANS[plan_key]['price']}\n\n"
-        f"🔑 *Pix Copia e Cola:*\n`{pix_code}`",
+        f"🔑 *PIX Copia e Cola:*\n`{pix_code}`",
         reply_markup=InlineKeyboardMarkup(buttons),
         parse_mode="Markdown"
     )
@@ -121,57 +183,115 @@ async def check_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     r = requests.get(
         f"{MP_API}/{payment_id}",
-        headers={"Authorization": f"Bearer {MP_ACCESS_TOKEN}"}
+        headers={"Authorization": f"Bearer {MP_ACCESS_TOKEN}"},
+        timeout=15
     ).json()
 
     if r.get("status") == "approved":
-        USERS[q.from_user.id] = {"plan": plan_key}
+        plan = PLANS[plan_key]
+        expires = (
+            (datetime.now() + timedelta(days=plan["days"])).isoformat()
+            if plan["days"] else None
+        )
+
+        save_user(q.from_user.id, plan_key, expires)
+        log_payment(q.from_user.id, q.from_user.username, plan["name"], plan["price"])
+
         invite = await context.bot.create_chat_invite_link(GROUP_ID, member_limit=1)
+
         await q.edit_message_text(
-            f"✅ *Pagamento aprovado!*\n\n"
+            "✅ *Pagamento aprovado!*\n\n"
             f"🔓 Acesso liberado:\n{invite.invite_link}",
             parse_mode="Markdown"
         )
     else:
         await q.edit_message_text("⏳ Pagamento ainda não aprovado.")
 
+# ================= EXPIRAÇÃO AUTOMÁTICA =================
+async def expiration_checker(app):
+    while True:
+        await asyncio.sleep(300)
+        now = datetime.now()
+
+        cursor.execute("SELECT user_id, expires_at FROM users WHERE expires_at IS NOT NULL")
+        for user_id, expires in cursor.fetchall():
+            if datetime.fromisoformat(expires) <= now:
+                try:
+                    await app.bot.ban_chat_member(GROUP_ID, user_id)
+                    await app.bot.unban_chat_member(GROUP_ID, user_id)
+                except:
+                    pass
+                remove_user(user_id)
+
+# ================= AVISO DE VENCIMENTO =================
+async def expiration_warning(app):
+    while True:
+        await asyncio.sleep(3600)
+        now = datetime.now()
+
+        cursor.execute("SELECT user_id, expires_at FROM users WHERE expires_at IS NOT NULL")
+        for user_id, expires in cursor.fetchall():
+            expires_dt = datetime.fromisoformat(expires)
+            if (expires_dt - now).days == 3:
+                try:
+                    await app.bot.send_message(
+                        user_id,
+                        "⚠️ *Seu VIP vence em 3 dias!*\n\nRenove para não perder o acesso.",
+                        parse_mode="Markdown"
+                    )
+                except:
+                    pass
+
 # ================= ADMIN =================
 async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
+
+    kb = [
+        [InlineKeyboardButton("👥 Usuários ativos", callback_data="admin_users")],
+        [InlineKeyboardButton("🧾 Logs de pagamento", callback_data="admin_logs")]
+    ]
+
     await update.message.reply_text(
-        f"👑 *Painel Admin*\n\n"
-        f"🆔 Admin ID: `{ADMIN_ID}`\n\n"
-        f"/usuarios – listar usuários\n"
-        f"/remover ID – remover usuário",
+        "👑 *Painel Administrativo*",
+        reply_markup=InlineKeyboardMarkup(kb),
         parse_mode="Markdown"
     )
 
-async def usuarios(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
+async def admin_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+
+    cursor.execute("SELECT user_id, plan, expires_at FROM users")
+    rows = cursor.fetchall()
+
+    if not rows:
+        await q.edit_message_text("Nenhum usuário ativo.")
         return
 
-    if not USERS:
-        await update.message.reply_text("Nenhum usuário ativo.")
+    text = "👥 *Usuários VIP:*\n\n"
+    for uid, plan, exp in rows:
+        exp_txt = "Vitalício" if not exp else datetime.fromisoformat(exp).strftime("%d/%m/%Y")
+        text += f"🆔 {uid} — {plan} — {exp_txt}\n"
+
+    await q.edit_message_text(text, parse_mode="Markdown")
+
+async def admin_logs(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+
+    cursor.execute("SELECT user_id, plan, value, date FROM logs ORDER BY id DESC LIMIT 10")
+    rows = cursor.fetchall()
+
+    if not rows:
+        await q.edit_message_text("Nenhum pagamento registrado.")
         return
 
-    texto = "👥 *Usuários VIP:*\n\n"
-    for uid, info in USERS.items():
-        texto += f"🆔 {uid} — {info['plan']}\n"
+    text = "🧾 *Últimos pagamentos:*\n\n"
+    for uid, plan, value, date in rows:
+        text += f"👤 {uid}\n💳 {plan} — R${value}\n📅 {date}\n\n"
 
-    await update.message.reply_text(texto, parse_mode="Markdown")
-
-async def remover(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        return
-
-    if not context.args:
-        await update.message.reply_text("Uso correto: /remover ID")
-        return
-
-    user_id = int(context.args[0])
-    USERS.pop(user_id, None)
-    await update.message.reply_text(f"Usuário {user_id} removido.")
+    await q.edit_message_text(text, parse_mode="Markdown")
 
 # ================= MAIN =================
 def main():
@@ -179,12 +299,15 @@ def main():
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("admin", admin))
-    app.add_handler(CommandHandler("usuarios", usuarios))
-    app.add_handler(CommandHandler("remover", remover))
 
     app.add_handler(CallbackQueryHandler(show_plans, pattern="^plans$"))
     app.add_handler(CallbackQueryHandler(buy_plan, pattern="^buy_"))
     app.add_handler(CallbackQueryHandler(check_payment, pattern="^check_payment$"))
+    app.add_handler(CallbackQueryHandler(admin_users, pattern="^admin_users$"))
+    app.add_handler(CallbackQueryHandler(admin_logs, pattern="^admin_logs$"))
+
+    app.create_task(expiration_checker(app))
+    app.create_task(expiration_warning(app))
 
     app.run_polling()
 
