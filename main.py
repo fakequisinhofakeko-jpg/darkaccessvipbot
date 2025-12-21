@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, time
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
@@ -9,8 +9,8 @@ from telegram.ext import (
 
 # ================= CONFIG =================
 BOT_TOKEN = "COLE_SEU_TOKEN_AQUI"
-ADMIN_ID = 123456789              # SEU ID
-GROUP_ID = -1003513694224         # SEU GRUPO
+ADMIN_ID = 123456789
+GROUP_ID = -1003513694224
 PIX_KEY = "d506a3da-1aab-4dd3-8655-260b48e04bfa"
 
 # ================= PLANOS =================
@@ -25,6 +25,7 @@ usuarios_ativos = {}
 avisos_enviados = set()
 logs = []
 total_arrecadado = 0.0
+ultimo_relatorio = None
 
 # ================= START =================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -54,7 +55,6 @@ async def escolher_plano(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     plano_id = q.data.replace("plano_", "")
     plano = PLANOS[plano_id]
-
     pagamentos_pendentes[q.from_user.id] = plano
 
     texto = (
@@ -79,22 +79,22 @@ async def confirmar_pagamento(update: Update, context: ContextTypes.DEFAULT_TYPE
     q = update.callback_query
     await q.answer()
 
-    user_id = q.from_user.id
-    plano = pagamentos_pendentes.get(user_id)
+    uid = q.from_user.id
+    plano = pagamentos_pendentes.get(uid)
 
     if not plano:
         await q.message.reply_text("❌ Nenhum pagamento pendente.")
         return
 
     teclado = [[
-        InlineKeyboardButton("✅ Aprovar", callback_data=f"aprovar_{user_id}"),
-        InlineKeyboardButton("❌ Rejeitar", callback_data=f"rejeitar_{user_id}")
+        InlineKeyboardButton("✅ Aprovar", callback_data=f"aprovar_{uid}"),
+        InlineKeyboardButton("❌ Rejeitar", callback_data=f"rejeitar_{uid}")
     ]]
 
     await context.bot.send_message(
         ADMIN_ID,
         f"💳 **Pagamento pendente**\n"
-        f"👤 ID: {user_id}\n"
+        f"👤 ID: {uid}\n"
         f"📦 {plano['nome']}\n"
         f"💰 R${plano['valor']}",
         reply_markup=InlineKeyboardMarkup(teclado),
@@ -124,14 +124,11 @@ async def moderar(update: Update, context: ContextTypes.DEFAULT_TYPE):
         total_arrecadado += plano["valor"]
         logs.append((uid, plano["nome"], plano["valor"], datetime.now()))
 
-        convite = await context.bot.create_chat_invite_link(
-            GROUP_ID,
-            member_limit=1
-        )
+        link = await context.bot.create_chat_invite_link(GROUP_ID, member_limit=1)
 
         await context.bot.send_message(
             uid,
-            f"✅ Pagamento aprovado!\n\n🔗 Acesso:\n{convite.invite_link}"
+            f"✅ Pagamento aprovado!\n\n🔗 Acesso:\n{link.invite_link}"
         )
 
         del pagamentos_pendentes[uid]
@@ -149,25 +146,24 @@ async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     texto = (
         f"👑 **Painel Admin**\n\n"
-        f"👥 Usuários ativos: {len(usuarios_ativos)}\n"
+        f"👥 Ativos: {len(usuarios_ativos)}\n"
         f"💳 Pendentes: {len(pagamentos_pendentes)}\n"
         f"💰 Total: R${total_arrecadado:.2f}"
     )
 
     await update.message.reply_text(texto, parse_mode="Markdown")
 
-# ================= EXPIRAÇÃO + AVISO =================
-async def verificar_expiracoes(context: ContextTypes.DEFAULT_TYPE):
+# ================= VERIFICAÇÕES =================
+async def tarefas_periodicas(context: ContextTypes.DEFAULT_TYPE):
+    global ultimo_relatorio
     agora = datetime.now()
 
+    # Aviso + Expiração
     for uid, expira in list(usuarios_ativos.items()):
         dias = (expira - agora).days
 
         if dias == 3 and uid not in avisos_enviados:
-            await context.bot.send_message(
-                uid,
-                "⏰ Seu acesso VIP vence em 3 dias."
-            )
+            await context.bot.send_message(uid, "⏰ Seu VIP vence em 3 dias.")
             avisos_enviados.add(uid)
 
         if agora >= expira:
@@ -175,16 +171,18 @@ async def verificar_expiracoes(context: ContextTypes.DEFAULT_TYPE):
             await context.bot.unban_chat_member(GROUP_ID, uid)
             del usuarios_ativos[uid]
 
-# ================= RELATÓRIO DIÁRIO =================
-async def relatorio_diario(context: ContextTypes.DEFAULT_TYPE):
-    texto = (
-        f"📊 **Relatório Diário**\n\n"
-        f"💳 Pendentes: {len(pagamentos_pendentes)}\n"
-        f"👥 Ativos: {len(usuarios_ativos)}\n"
-        f"💰 Total: R${total_arrecadado:.2f}"
-    )
-
-    await context.bot.send_message(ADMIN_ID, texto, parse_mode="Markdown")
+    # Relatório diário às 09:00
+    if agora.hour == 9:
+        if ultimo_relatorio != agora.date():
+            await context.bot.send_message(
+                ADMIN_ID,
+                f"📊 **Relatório Diário**\n\n"
+                f"👥 Ativos: {len(usuarios_ativos)}\n"
+                f"💳 Pendentes: {len(pagamentos_pendentes)}\n"
+                f"💰 Total: R${total_arrecadado:.2f}",
+                parse_mode="Markdown"
+            )
+            ultimo_relatorio = agora.date()
 
 # ================= MAIN =================
 def main():
@@ -196,8 +194,7 @@ def main():
     app.add_handler(CallbackQueryHandler(confirmar_pagamento, pattern="confirmar_pagamento"))
     app.add_handler(CallbackQueryHandler(moderar, pattern="^(aprovar|rejeitar)_"))
 
-    app.job_queue.run_repeating(verificar_expiracoes, interval=3600)
-    app.job_queue.run_daily(relatorio_diario, time=datetime.strptime("09:00", "%H:%M").time())
+    app.job_queue.run_repeating(tarefas_periodicas, interval=3600)
 
     app.run_polling()
 
