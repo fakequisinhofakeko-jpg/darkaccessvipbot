@@ -1,162 +1,59 @@
 import os
-import requests
-import uuid
-from telegram import (
-    Update,
-    InlineKeyboardButton,
-    InlineKeyboardMarkup
-)
+from telegram import Update
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
-    CallbackQueryHandler,
     ContextTypes
 )
 
 # =========================
-# VARIÁVEIS DE AMBIENTE
+# CONFIGURAÇÕES
 # =========================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-MP_ACCESS_TOKEN = os.getenv("MP_ACCESS_TOKEN")
+
+# ID DO GRUPO VIP
+VIP_GROUP_ID = -1003513694224
 
 # =========================
-# START / MENU PRINCIPAL
+# START
 # =========================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    teclado = [
-        [InlineKeyboardButton("📌 Planos", callback_data="menu_planos")],
-        [InlineKeyboardButton("💳 Pagamento", callback_data="menu_pagamento")],
-        [InlineKeyboardButton("❓ Ajuda", callback_data="menu_ajuda")]
-    ]
-
     await update.message.reply_text(
-        "🔥 *Bem-vindo ao Dark Access VIP*\n\n"
-        "Escolha uma opção abaixo:",
-        reply_markup=InlineKeyboardMarkup(teclado),
-        parse_mode="Markdown"
+        "🔥 Dark Access VIP\n\n"
+        "Use /linkvip para testar o acesso ao grupo."
     )
 
 # =========================
-# MENU PLANOS
+# GERAR LINK DO GRUPO (TESTE)
 # =========================
-async def mostrar_planos(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    teclado = [
-        [InlineKeyboardButton("💎 1 Mês - R$24,90", callback_data="vip_1m")],
-        [InlineKeyboardButton("🔥 3 Meses - R$64,90", callback_data="vip_3m")],
-        [InlineKeyboardButton("👑 Vitalício - R$149,90", callback_data="vip_vitalicio")]
-    ]
-
-    await update.callback_query.message.reply_text(
-        "📌 *Escolha seu plano:*",
-        reply_markup=InlineKeyboardMarkup(teclado),
-        parse_mode="Markdown"
-    )
-
-# =========================
-# CRIAR PIX (MERCADO PAGO)
-# =========================
-def criar_pix(valor, descricao):
-    url = "https://api.mercadopago.com/v1/payments"
-
-    headers = {
-        "Authorization": f"Bearer {MP_ACCESS_TOKEN}",
-        "Content-Type": "application/json",
-        "X-Idempotency-Key": str(uuid.uuid4())  # 🔥 ESSENCIAL
-    }
-
-    data = {
-        "transaction_amount": float(valor),
-        "description": descricao,
-        "payment_method_id": "pix",
-        "payer": {
-            "email": "cliente@telegram.com"
-        }
-    }
-
-    response = requests.post(url, json=data, headers=headers)
-
-    return {
-        "status_code": response.status_code,
-        "json": response.json()
-    }
-
-# =========================
-# CALLBACK DOS PLANOS
-# =========================
-async def callback_planos(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-
-    if query.data == "vip_1m":
-        valor = 24.90
-        plano = "VIP 1 Mês"
-    elif query.data == "vip_3m":
-        valor = 64.90
-        plano = "VIP 3 Meses"
-    elif query.data == "vip_vitalicio":
-        valor = 149.90
-        plano = "VIP Vitalício"
-    else:
-        return
-
-    pagamento = criar_pix(valor, plano)
-
-    if pagamento["status_code"] != 201:
-        await query.message.reply_text(
-            f"❌ *Erro Mercado Pago*\n\n"
-            f"`{pagamento['json']}`",
-            parse_mode="Markdown"
-        )
-        return
-
-    pix_copia_cola = pagamento["json"]["point_of_interaction"]["transaction_data"]["qr_code"]
-
-    await query.message.reply_text(
-        f"💳 *Pagamento PIX*\n\n"
-        f"📌 Plano: {plano}\n"
-        f"💰 Valor: R${valor}\n\n"
-        f"🔑 *Pix Copia e Cola:*\n"
-        f"`{pix_copia_cola}`\n\n"
-        f"⚠️ Após pagar, aguarde a confirmação.",
-        parse_mode="Markdown"
-    )
-
-# =========================
-# CALLBACK MENU GERAL
-# =========================
-async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-
-    if query.data == "menu_planos":
-        await mostrar_planos(update, context)
-
-    elif query.data == "menu_pagamento":
-        await query.message.reply_text(
-            "💳 Pagamento via *PIX automático*.\n"
-            "Escolha um plano para gerar o Pix.",
-            parse_mode="Markdown"
+async def gerar_link_vip(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        invite = await context.bot.create_chat_invite_link(
+            chat_id=VIP_GROUP_ID,
+            member_limit=1,
+            name="Acesso VIP"
         )
 
-    elif query.data == "menu_ajuda":
-        await query.message.reply_text(
-            "❓ *Ajuda*\n\n"
-            "• Escolha um plano\n"
-            "• Gere o Pix\n"
-            "• Faça o pagamento\n\n"
-            "Liberação automática após confirmação.",
-            parse_mode="Markdown"
+        await update.message.reply_text(
+            "✅ Link VIP gerado com sucesso:\n\n"
+            f"{invite.invite_link}\n\n"
+            "⚠️ Link válido para 1 pessoa."
+        )
+
+    except Exception as e:
+        await update.message.reply_text(
+            "❌ Erro ao gerar link do grupo.\n\n"
+            f"Detalhes:\n{e}"
         )
 
 # =========================
-# INICIALIZAÇÃO
+# MAIN
 # =========================
 def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CallbackQueryHandler(callback_planos, pattern="^vip_"))
-    app.add_handler(CallbackQueryHandler(menu_callback))
+    app.add_handler(CommandHandler("linkvip", gerar_link_vip))
 
     print("🤖 Bot rodando...")
     app.run_polling()
