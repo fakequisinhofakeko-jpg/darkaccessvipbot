@@ -16,15 +16,14 @@ from telegram.ext import (
 # ================== CONFIG SAFE ==================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 MP_ACCESS_TOKEN = os.getenv("MP_ACCESS_TOKEN")
-
 GROUP_ID_RAW = os.getenv("GROUP_ID")
 ADMIN_ID_RAW = os.getenv("ADMIN_ID")
 
 if not BOT_TOKEN:
-    raise RuntimeError("❌ BOT_TOKEN não definido")
+    raise RuntimeError("BOT_TOKEN não definido")
 
 if not GROUP_ID_RAW or not ADMIN_ID_RAW:
-    raise RuntimeError("❌ GROUP_ID ou ADMIN_ID não definidos")
+    raise RuntimeError("GROUP_ID ou ADMIN_ID não definidos")
 
 GROUP_ID = int(GROUP_ID_RAW)
 ADMIN_ID = int(ADMIN_ID_RAW)
@@ -32,7 +31,7 @@ ADMIN_ID = int(ADMIN_ID_RAW)
 MP_API = "https://api.mercadopago.com/v1/payments"
 DB_FILE = "database.db"
 
-print("✅ Variáveis carregadas com sucesso")
+print("✅ Variáveis carregadas")
 
 # ================== PLANOS ==================
 PLANS = {
@@ -138,8 +137,7 @@ def criar_pix(plan_key, user_id):
         }
     }
 
-    r = requests.post(MP_API, headers=headers, json=data, timeout=20)
-    return r.json()
+    return requests.post(MP_API, headers=headers, json=data, timeout=20).json()
 
 # ================== COMPRAR ==================
 async def buy_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -152,7 +150,7 @@ async def buy_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
     existing = get_user(user_id)
     if existing and existing[0] == "vip_vitalicio":
         await q.edit_message_text(
-            "👑 *Você já possui VIP Vitalício.*\n\nAcesso permanente.",
+            "👑 *Você já possui VIP Vitalício.*",
             parse_mode="Markdown"
         )
         return
@@ -220,7 +218,7 @@ async def check_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await q.edit_message_text("⏳ Pagamento ainda não aprovado.")
 
 # ================== EXPIRAÇÃO ==================
-async def expiration_loop(app):
+async def expiration_loop(application):
     while True:
         await asyncio.sleep(300)
         now = datetime.now()
@@ -229,25 +227,28 @@ async def expiration_loop(app):
         for user_id, expires in cursor.fetchall():
             if datetime.fromisoformat(expires) <= now:
                 try:
-                    await app.bot.ban_chat_member(GROUP_ID, user_id)
-                    await app.bot.unban_chat_member(GROUP_ID, user_id)
+                    await application.bot.ban_chat_member(GROUP_ID, user_id)
+                    await application.bot.unban_chat_member(GROUP_ID, user_id)
                 except:
                     pass
                 remove_user(user_id)
 
+# ================== POST INIT ==================
+async def post_init(application):
+    application.create_task(expiration_loop(application))
+    print("⏳ Expiração automática ativa")
+
 # ================== MAIN ==================
-async def main():
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
+def main():
+    app = ApplicationBuilder().token(BOT_TOKEN).post_init(post_init).build()
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(show_plans, pattern="^plans$"))
     app.add_handler(CallbackQueryHandler(buy_plan, pattern="^buy_"))
     app.add_handler(CallbackQueryHandler(check_payment, pattern="^check_payment$"))
 
-    asyncio.create_task(expiration_loop(app))
-
-    print("🤖 Bot iniciado com sucesso")
-    await app.run_polling(drop_pending_updates=True)
+    print("🤖 Bot iniciado")
+    app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
