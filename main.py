@@ -11,7 +11,7 @@ from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
     CallbackQueryHandler,
-    ContextTypes
+    ContextTypes,
 )
 
 # ================== CONFIG ==================
@@ -110,7 +110,7 @@ async def show_plans(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
 
-# ================== MERCADO PAGO (SAFE ASYNC) ==================
+# ================== MERCADO PAGO ==================
 def _criar_pix_sync(plan_key, user_id):
     plan = PLANS[plan_key]
 
@@ -130,11 +130,10 @@ def _criar_pix_sync(plan_key, user_id):
         }
     }
 
-    r = requests.post(MP_API, headers=headers, json=data, timeout=20)
-    return r.json()
+    return requests.post(MP_API, headers=headers, json=data, timeout=20).json()
 
 async def criar_pix(plan_key, user_id):
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     return await loop.run_in_executor(
         None,
         partial(_criar_pix_sync, plan_key, user_id)
@@ -150,10 +149,7 @@ async def buy_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     existing = get_user(user_id)
     if existing and existing[0] == "vip_vitalicio":
-        await q.edit_message_text(
-            "👑 *Você já possui VIP Vitalício.*\n\nAcesso permanente.",
-            parse_mode="Markdown"
-        )
+        await q.edit_message_text("👑 Você já possui VIP Vitalício.")
         return
 
     try:
@@ -163,7 +159,7 @@ async def buy_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
         checkout = data.get("ticket_url")
         payment_id = pix["id"]
     except Exception:
-        await q.edit_message_text("❌ Erro ao gerar pagamento. Tente novamente.")
+        await q.edit_message_text("❌ Erro ao gerar pagamento.")
         return
 
     context.user_data["payment_id"] = payment_id
@@ -183,7 +179,7 @@ async def buy_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
 
-# ================== VERIFICAR PAGAMENTO ==================
+# ================== VERIFICAR ==================
 async def check_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
@@ -191,19 +187,15 @@ async def check_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
     payment_id = context.user_data.get("payment_id")
     plan_key = context.user_data.get("plan")
 
-    if not payment_id or not plan_key:
-        await q.edit_message_text("❌ Sessão expirada. Gere o pagamento novamente.")
+    if not payment_id:
+        await q.edit_message_text("❌ Sessão expirada.")
         return
 
-    try:
-        r = requests.get(
-            f"{MP_API}/{payment_id}",
-            headers={"Authorization": f"Bearer {MP_ACCESS_TOKEN}"},
-            timeout=15
-        ).json()
-    except Exception:
-        await q.edit_message_text("⚠️ Erro ao consultar pagamento.")
-        return
+    r = requests.get(
+        f"{MP_API}/{payment_id}",
+        headers={"Authorization": f"Bearer {MP_ACCESS_TOKEN}"},
+        timeout=15
+    ).json()
 
     if r.get("status") == "approved":
         plan = PLANS[plan_key]
@@ -218,19 +210,16 @@ async def check_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
         invite = await q.bot.create_chat_invite_link(GROUP_ID, member_limit=1)
 
         await q.edit_message_text(
-            "✅ *Pagamento aprovado!*\n\n"
-            f"🔓 Acesso liberado:\n{invite.invite_link}",
-            parse_mode="Markdown"
+            f"✅ Pagamento aprovado!\n\n🔓 Acesso:\n{invite.invite_link}"
         )
     else:
         await q.edit_message_text("⏳ Pagamento ainda não aprovado.")
 
-# ================== EXPIRAÇÃO AUTOMÁTICA ==================
+# ================== EXPIRAÇÃO ==================
 async def expiration_loop(app):
     while True:
         await asyncio.sleep(300)
         now = datetime.now()
-
         cursor.execute("SELECT user_id, expires_at FROM users WHERE expires_at IS NOT NULL")
         for user_id, expires in cursor.fetchall():
             if datetime.fromisoformat(expires) <= now:
@@ -240,6 +229,9 @@ async def expiration_loop(app):
                 except:
                     pass
                 remove_user(user_id)
+
+async def post_init(app):
+    app.create_task(expiration_loop(app))
 
 # ================== ADMIN ==================
 async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -251,64 +243,55 @@ async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("🧾 Logs de pagamento", callback_data="admin_logs")]
     ]
 
-    await update.message.reply_text(
-        "👑 *Painel Admin*",
-        reply_markup=InlineKeyboardMarkup(kb),
-        parse_mode="Markdown"
-    )
+    await update.message.reply_text("👑 Painel Admin", reply_markup=InlineKeyboardMarkup(kb))
 
 async def admin_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
 
-    cursor.execute("SELECT user_id, plan, expires_at FROM users")
+    cursor.execute("SELECT user_id, plan FROM users")
     rows = cursor.fetchall()
 
     if not rows:
         await q.edit_message_text("Nenhum usuário ativo.")
         return
 
-    text = "👥 *Usuários VIP:*\n\n"
-    for uid, plan, exp in rows:
-        exp_txt = "Vitalício" if not exp else datetime.fromisoformat(exp).strftime("%d/%m/%Y")
-        text += f"🆔 {uid} — {plan} — {exp_txt}\n"
-
-    await q.edit_message_text(text, parse_mode="Markdown")
+    txt = "\n".join([f"{u} — {p}" for u, p in rows])
+    await q.edit_message_text(txt)
 
 async def admin_logs(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
 
-    cursor.execute("SELECT user_id, plan, value, date FROM logs ORDER BY id DESC LIMIT 10")
+    cursor.execute("SELECT user_id, plan, value FROM logs ORDER BY id DESC LIMIT 10")
     rows = cursor.fetchall()
 
     if not rows:
-        await q.edit_message_text("Nenhum pagamento registrado.")
+        await q.edit_message_text("Nenhum log.")
         return
 
-    text = "🧾 *Últimos pagamentos:*\n\n"
-    for uid, plan, value, date in rows:
-        text += f"👤 {uid}\n💳 {plan} — R${value}\n📅 {date}\n\n"
-
-    await q.edit_message_text(text, parse_mode="Markdown")
+    txt = "\n".join([f"{u} — {p} — R${v}" for u, p, v in rows])
+    await q.edit_message_text(txt)
 
 # ================== MAIN ==================
-async def main():
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
+def main():
+    app = (
+        ApplicationBuilder()
+        .token(BOT_TOKEN)
+        .post_init(post_init)
+        .build()
+    )
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("admin", admin))
-
     app.add_handler(CallbackQueryHandler(show_plans, pattern="^plans$"))
     app.add_handler(CallbackQueryHandler(buy_plan, pattern="^buy_"))
     app.add_handler(CallbackQueryHandler(check_payment, pattern="^check_payment$"))
     app.add_handler(CallbackQueryHandler(admin_users, pattern="^admin_users$"))
     app.add_handler(CallbackQueryHandler(admin_logs, pattern="^admin_logs$"))
 
-    asyncio.create_task(expiration_loop(app))
-
-    print("🤖 Bot iniciado com sucesso")
-    await app.run_polling(drop_pending_updates=True)
+    print("🤖 Bot rodando")
+    app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
