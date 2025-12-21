@@ -1,5 +1,6 @@
 import os
 import requests
+import uuid
 from telegram import (
     Update,
     InlineKeyboardButton,
@@ -56,9 +57,11 @@ async def mostrar_planos(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # =========================
 def criar_pix(valor, descricao):
     url = "https://api.mercadopago.com/v1/payments"
+
     headers = {
         "Authorization": f"Bearer {MP_ACCESS_TOKEN}",
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
+        "X-Idempotency-Key": str(uuid.uuid4())  # 🔥 ESSENCIAL
     }
 
     data = {
@@ -98,10 +101,9 @@ async def callback_planos(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     pagamento = criar_pix(valor, plano)
 
-    # 🔴 MOSTRA ERRO REAL DO MERCADO PAGO
     if pagamento["status_code"] != 201:
         await query.message.reply_text(
-            f"❌ *Erro ao gerar o Pix*\n\n"
+            f"❌ *Erro Mercado Pago*\n\n"
             f"`{pagamento['json']}`",
             parse_mode="Markdown"
         )
