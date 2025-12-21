@@ -3,19 +3,12 @@ import sqlite3
 import asyncio
 from datetime import datetime, timedelta
 
-from telegram import (
-    Update,
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
-    ChatPermissions
-)
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
     CallbackQueryHandler,
-    MessageHandler,
-    ContextTypes,
-    filters
+    ContextTypes
 )
 
 # ================= CONFIG =================
@@ -86,7 +79,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     kb = [[InlineKeyboardButton("🔥 Ver planos VIP", callback_data="plans")]]
     await update.message.reply_text(
         "🔞 *AVISO LEGAL*\n"
-        "O grupo contém conteúdo adulto +18 (anime).\n"
+        "Conteúdo adulto +18 (anime).\n"
         "Ao continuar, você declara ser maior de 18 anos.\n\n"
         "📌 Pagamento via PIX\n"
         "🔒 Conteúdo premium",
@@ -127,7 +120,7 @@ async def buy(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"📌 Plano: {plan['name']}\n"
         f"💰 Valor: R${plan['price']}\n\n"
         f"🔑 *Chave PIX:*\n`{PIX_KEY}`\n\n"
-        f"Após pagar, clique em *Confirmar pagamento*.",
+        "Após pagar, clique em *Confirmar pagamento*.",
         reply_markup=InlineKeyboardMarkup(kb),
         parse_mode="Markdown"
     )
@@ -151,7 +144,7 @@ async def confirm_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await context.bot.send_message(
         ADMIN_ID,
-        f"💰 *Novo pagamento pendente*\n\n"
+        f"💰 *Pagamento pendente*\n\n"
         f"👤 {q.from_user.id}\n"
         f"📌 {plan['name']} – R${plan['price']}",
         reply_markup=InlineKeyboardMarkup(kb),
@@ -165,10 +158,8 @@ async def admin_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
 
-    data = q.data.split("_")
-    action = data[0]
-    user_id = int(data[1])
-    plan_key = data[2] if action == "approve" else None
+    action, user_id, plan_key = q.data.split("_")
+    user_id = int(user_id)
 
     if action == "approve":
         plan = PLANS[plan_key]
@@ -194,7 +185,7 @@ async def admin_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(user_id, "❌ Pagamento rejeitado.")
         await q.edit_message_text("❌ Rejeitado")
 
-# ================= ADMIN PANEL =================
+# ================= ADMIN =================
 async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
@@ -210,7 +201,7 @@ async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
 
-# ================= EXPIRAÇÃO =================
+# ================= BACKGROUND TASKS =================
 async def expiration_loop(app):
     while True:
         await asyncio.sleep(300)
@@ -226,7 +217,6 @@ async def expiration_loop(app):
                     pass
                 remove_user(uid)
 
-# ================= DAILY REPORT =================
 async def daily_report(app):
     while True:
         await asyncio.sleep(86400)
@@ -242,6 +232,11 @@ async def daily_report(app):
             parse_mode="Markdown"
         )
 
+# ================= STARTUP =================
+async def on_startup(app):
+    app.create_task(expiration_loop(app))
+    app.create_task(daily_report(app))
+
 # ================= MAIN =================
 def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
@@ -254,9 +249,7 @@ def main():
     app.add_handler(CallbackQueryHandler(confirm_payment, pattern="^confirm_payment$"))
     app.add_handler(CallbackQueryHandler(admin_action, pattern="^(approve|reject)_"))
 
-    app.create_task(expiration_loop(app))
-    app.create_task(daily_report(app))
-
+    app.post_init = on_startup
     app.run_polling()
 
 if __name__ == "__main__":
