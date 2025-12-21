@@ -47,7 +47,7 @@ async def show_plans(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 # ---------- CRIAR PIX ----------
-def create_pix(plan_key, user_id):
+    def create_pix(plan_key, user_id):
     plan = PLANS[plan_key]
 
     url = "https://api.mercadopago.com/v1/payments"
@@ -57,14 +57,27 @@ def create_pix(plan_key, user_id):
     }
 
     data = {
-        "transaction_amount": plan["price"],
+        "transaction_amount": float(plan["price"]),
         "description": plan["name"],
         "payment_method_id": "pix",
-        "payer": {"email": f"user{user_id}@bot.com"}
+        "external_reference": f"user_{user_id}_{plan_key}",
+        "payer": {
+            "email": f"user{user_id}@darkaccessvip.com"
+        }
     }
 
     response = requests.post(url, headers=headers, json=data)
-    return response.json()
+
+    try:
+        result = response.json()
+    except Exception:
+        return {"error": "Resposta inválida do Mercado Pago"}
+
+    # 🔥 DEBUG REAL — ISSO SALVA SUA VIDA
+    if response.status_code != 201:
+        print("❌ ERRO MP:", result)
+
+    return result
 
 # ---------- COMPRAR ----------
 async def buy_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
