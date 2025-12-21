@@ -1,6 +1,5 @@
 import os
 import uuid
-import asyncio
 import requests
 import sqlite3
 from datetime import datetime, timedelta
@@ -139,8 +138,8 @@ async def buy_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
     existing = get_user(user_id)
     if existing and existing[0] == "vip_vitalicio":
         await q.edit_message_text(
-            "👑 *Você já possui acesso VIP Vitalício.*\n\n"
-            "Seu acesso é permanente.",
+            "👑 *Você já possui VIP Vitalício.*\n\n"
+            "Não é necessário comprar novamente.",
             parse_mode="Markdown"
         )
         return
@@ -173,7 +172,7 @@ async def buy_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
 
-# ================= VERIFICAR =================
+# ================= VERIFICAR PAGAMENTO =================
 async def check_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
@@ -207,40 +206,33 @@ async def check_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await q.edit_message_text("⏳ Pagamento ainda não aprovado.")
 
-# ================= EXPIRAÇÃO AUTOMÁTICA =================
-async def expiration_checker(app):
-    while True:
-        await asyncio.sleep(300)
-        now = datetime.now()
+# ================= JOBS =================
+async def expiration_job(context: ContextTypes.DEFAULT_TYPE):
+    now = datetime.now()
+    cursor.execute("SELECT user_id, expires_at FROM users WHERE expires_at IS NOT NULL")
+    for user_id, expires in cursor.fetchall():
+        if datetime.fromisoformat(expires) <= now:
+            try:
+                await context.bot.ban_chat_member(GROUP_ID, user_id)
+                await context.bot.unban_chat_member(GROUP_ID, user_id)
+            except:
+                pass
+            remove_user(user_id)
 
-        cursor.execute("SELECT user_id, expires_at FROM users WHERE expires_at IS NOT NULL")
-        for user_id, expires in cursor.fetchall():
-            if datetime.fromisoformat(expires) <= now:
-                try:
-                    await app.bot.ban_chat_member(GROUP_ID, user_id)
-                    await app.bot.unban_chat_member(GROUP_ID, user_id)
-                except:
-                    pass
-                remove_user(user_id)
-
-# ================= AVISO DE VENCIMENTO =================
-async def expiration_warning(app):
-    while True:
-        await asyncio.sleep(3600)
-        now = datetime.now()
-
-        cursor.execute("SELECT user_id, expires_at FROM users WHERE expires_at IS NOT NULL")
-        for user_id, expires in cursor.fetchall():
-            expires_dt = datetime.fromisoformat(expires)
-            if (expires_dt - now).days == 3:
-                try:
-                    await app.bot.send_message(
-                        user_id,
-                        "⚠️ *Seu VIP vence em 3 dias!*\n\nRenove para não perder o acesso.",
-                        parse_mode="Markdown"
-                    )
-                except:
-                    pass
+async def expiration_warning_job(context: ContextTypes.DEFAULT_TYPE):
+    now = datetime.now()
+    cursor.execute("SELECT user_id, expires_at FROM users WHERE expires_at IS NOT NULL")
+    for user_id, expires in cursor.fetchall():
+        expires_dt = datetime.fromisoformat(expires)
+        if 0 < (expires_dt - now).days == 3:
+            try:
+                await context.bot.send_message(
+                    user_id,
+                    "⚠️ *Seu VIP vence em 3 dias!*\n\nRenove para não perder o acesso.",
+                    parse_mode="Markdown"
+                )
+            except:
+                pass
 
 # ================= ADMIN =================
 async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -306,8 +298,8 @@ def main():
     app.add_handler(CallbackQueryHandler(admin_users, pattern="^admin_users$"))
     app.add_handler(CallbackQueryHandler(admin_logs, pattern="^admin_logs$"))
 
-    app.create_task(expiration_checker(app))
-    app.create_task(expiration_warning(app))
+    app.job_queue.run_repeating(expiration_job, interval=300, first=15)
+    app.job_queue.run_repeating(expiration_warning_job, interval=3600, first=60)
 
     app.run_polling()
 
