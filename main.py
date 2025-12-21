@@ -8,7 +8,7 @@ from telegram.ext import (
 )
 
 # ================= CONFIG =================
-BOT_TOKEN = "COLE_SEU_TOKEN_AQUI"
+BOT_TOKEN = 8444138111:AAFFkyvFRQMa0gyG77_pnyd7uWuR545gDkQ
 ADMIN_ID = 123456789
 GROUP_ID = -1003513694224
 PIX_KEY = "d506a3da-1aab-4dd3-8655-260b48e04bfa"
