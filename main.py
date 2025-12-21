@@ -13,13 +13,15 @@ from telegram.ext import (
 )
 
 # =========================
-# VARIÁVEIS DE AMBIENTE
+# CONFIGURAÇÕES
 # =========================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 MP_ACCESS_TOKEN = os.getenv("MP_ACCESS_TOKEN")
 
+VIP_GROUP_ID = -1003513694224  # ID DO GRUPO VIP
+
 # =========================
-# COMANDO /start
+# START / MENU
 # =========================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     teclado = [
@@ -36,23 +38,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 # =========================
-# COMANDO /id (ID DO GRUPO)
-# =========================
-async def id_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat = update.effective_chat
-    await update.message.reply_text(
-        f"📌 ID do chat:\n`{chat.id}`",
-        parse_mode="Markdown"
-    )
-
-# =========================
 # MENU PLANOS
 # =========================
 async def mostrar_planos(update: Update, context: ContextTypes.DEFAULT_TYPE):
     teclado = [
-        [InlineKeyboardButton("💎 1 Mês — R$24,90", callback_data="vip_1m")],
-        [InlineKeyboardButton("🔥 3 Meses — R$64,90", callback_data="vip_3m")],
-        [InlineKeyboardButton("👑 Vitalício — R$149,90", callback_data="vip_vitalicio")]
+        [InlineKeyboardButton("💎 1 Mês – R$24,90", callback_data="vip_1m")],
+        [InlineKeyboardButton("🔥 3 Meses – R$64,90", callback_data="vip_3m")],
+        [InlineKeyboardButton("👑 Vitalício – R$149,90", callback_data="vip_vitalicio")]
     ]
 
     await update.callback_query.message.reply_text(
@@ -113,13 +105,13 @@ async def callback_planos(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"💰 Valor: R${valor}\n\n"
             f"🔑 *Pix Copia e Cola:*\n"
             f"`{pix_copia_cola}`\n\n"
-            f"⚠️ Após pagar, aguarde a confirmação.",
+            f"⚠️ Após pagar, aguarde a liberação automática.",
             parse_mode="Markdown"
         )
     except:
         await query.message.reply_text(
-            "❌ *Erro ao gerar o Pix.*\n"
-            "Verifique se o `MP_ACCESS_TOKEN` está correto.",
+            "❌ Erro ao gerar o Pix.\n"
+            "Verifique se o MP_ACCESS_TOKEN está correto.",
             parse_mode="Markdown"
         )
 
@@ -143,15 +135,25 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif query.data == "menu_ajuda":
         await query.message.reply_text(
             "❓ *Ajuda*\n\n"
-            "1️⃣ Escolha um plano\n"
-            "2️⃣ Pague via Pix\n"
-            "3️⃣ Aguarde a liberação\n\n"
-            "Suporte automático.",
+            "• Escolha um plano\n"
+            "• Faça o pagamento\n"
+            "• Aguarde liberação automática\n\n"
+            "Sistema seguro.",
             parse_mode="Markdown"
         )
 
 # =========================
-# INICIALIZAÇÃO
+# COMANDO /id (DEBUG)
+# =========================
+async def id_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat = update.effective_chat
+    await update.message.reply_text(
+        f"📌 ID do chat:\n`{chat.id}`",
+        parse_mode="Markdown"
+    )
+
+# =========================
+# MAIN
 # =========================
 def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
