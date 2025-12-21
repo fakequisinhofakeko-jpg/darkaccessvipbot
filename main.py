@@ -1,5 +1,4 @@
 import os
-import uuid
 import requests
 from telegram import (
     Update,
@@ -14,13 +13,13 @@ from telegram.ext import (
 )
 
 # =========================
-# CONFIGURAÇÕES
+# VARIÁVEIS DE AMBIENTE
 # =========================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 MP_ACCESS_TOKEN = os.getenv("MP_ACCESS_TOKEN")
 
 # =========================
-# START / MENU PRINCIPAL
+# COMANDO /start
 # =========================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     teclado = [
@@ -37,13 +36,23 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 # =========================
+# COMANDO /id (ID DO GRUPO)
+# =========================
+async def id_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat = update.effective_chat
+    await update.message.reply_text(
+        f"📌 ID do chat:\n`{chat.id}`",
+        parse_mode="Markdown"
+    )
+
+# =========================
 # MENU PLANOS
 # =========================
 async def mostrar_planos(update: Update, context: ContextTypes.DEFAULT_TYPE):
     teclado = [
-        [InlineKeyboardButton("💎 1 Mês - R$24,90", callback_data="vip_1m")],
-        [InlineKeyboardButton("🔥 3 Meses - R$64,90", callback_data="vip_3m")],
-        [InlineKeyboardButton("👑 Vitalício - R$149,90", callback_data="vip_vitalicio")]
+        [InlineKeyboardButton("💎 1 Mês — R$24,90", callback_data="vip_1m")],
+        [InlineKeyboardButton("🔥 3 Meses — R$64,90", callback_data="vip_3m")],
+        [InlineKeyboardButton("👑 Vitalício — R$149,90", callback_data="vip_vitalicio")]
     ]
 
     await update.callback_query.message.reply_text(
@@ -57,28 +66,21 @@ async def mostrar_planos(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # =========================
 def criar_pix(valor, descricao):
     url = "https://api.mercadopago.com/v1/payments"
-
     headers = {
         "Authorization": f"Bearer {MP_ACCESS_TOKEN}",
-        "Content-Type": "application/json",
-        "X-Idempotency-Key": str(uuid.uuid4())
+        "Content-Type": "application/json"
     }
 
     data = {
-        "transaction_amount": float(valor),
+        "transaction_amount": valor,
         "description": descricao,
         "payment_method_id": "pix",
         "payer": {
-            "email": "comprador@telegram.com"
+            "email": "cliente@telegram.com"
         }
     }
 
     response = requests.post(url, json=data, headers=headers)
-
-    if response.status_code not in [200, 201]:
-        print("❌ ERRO MERCADO PAGO:", response.text)
-        return None
-
     return response.json()
 
 # =========================
@@ -102,28 +104,27 @@ async def callback_planos(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     pagamento = criar_pix(valor, plano)
 
-    if not pagamento:
+    try:
+        pix_copia_cola = pagamento["point_of_interaction"]["transaction_data"]["qr_code"]
+
         await query.message.reply_text(
-            "❌ *Erro ao gerar o Pix.*\n"
-            "Pagamento não autorizado pelo Mercado Pago.",
+            f"💳 *Pagamento PIX*\n\n"
+            f"📌 Plano: {plano}\n"
+            f"💰 Valor: R${valor}\n\n"
+            f"🔑 *Pix Copia e Cola:*\n"
+            f"`{pix_copia_cola}`\n\n"
+            f"⚠️ Após pagar, aguarde a confirmação.",
             parse_mode="Markdown"
         )
-        return
-
-    pix_copia_cola = pagamento["point_of_interaction"]["transaction_data"]["qr_code"]
-
-    await query.message.reply_text(
-        f"💳 *Pagamento PIX*\n\n"
-        f"📌 Plano: {plano}\n"
-        f"💰 Valor: R${valor}\n\n"
-        f"🔑 *Pix Copia e Cola:*\n"
-        f"`{pix_copia_cola}`\n\n"
-        f"⚠️ Após pagar, aguarde a confirmação.",
-        parse_mode="Markdown"
-    )
+    except:
+        await query.message.reply_text(
+            "❌ *Erro ao gerar o Pix.*\n"
+            "Verifique se o `MP_ACCESS_TOKEN` está correto.",
+            parse_mode="Markdown"
+        )
 
 # =========================
-# CALLBACK MENU GERAL
+# MENU CALLBACK
 # =========================
 async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -134,7 +135,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif query.data == "menu_pagamento":
         await query.message.reply_text(
-            "💳 Os pagamentos são feitos via *PIX automático*.\n"
+            "💳 Pagamento via *PIX automático*.\n"
             "Escolha um plano para gerar o Pix.",
             parse_mode="Markdown"
         )
@@ -142,9 +143,9 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif query.data == "menu_ajuda":
         await query.message.reply_text(
             "❓ *Ajuda*\n\n"
-            "• Escolha um plano\n"
-            "• Gere o Pix\n"
-            "• Pague e aguarde a liberação\n\n"
+            "1️⃣ Escolha um plano\n"
+            "2️⃣ Pague via Pix\n"
+            "3️⃣ Aguarde a liberação\n\n"
             "Suporte automático.",
             parse_mode="Markdown"
         )
@@ -156,6 +157,7 @@ def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("id", id_command))
     app.add_handler(CallbackQueryHandler(callback_planos, pattern="^vip_"))
     app.add_handler(CallbackQueryHandler(menu_callback))
 
