@@ -13,15 +13,13 @@ from telegram.ext import (
 )
 
 # =========================
-# CONFIGURAÇÕES
+# VARIÁVEIS DE AMBIENTE
 # =========================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 MP_ACCESS_TOKEN = os.getenv("MP_ACCESS_TOKEN")
 
-VIP_GROUP_ID = -1003513694224  # ID DO GRUPO VIP
-
 # =========================
-# START / MENU
+# START / MENU PRINCIPAL
 # =========================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     teclado = [
@@ -42,9 +40,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # =========================
 async def mostrar_planos(update: Update, context: ContextTypes.DEFAULT_TYPE):
     teclado = [
-        [InlineKeyboardButton("💎 1 Mês – R$24,90", callback_data="vip_1m")],
-        [InlineKeyboardButton("🔥 3 Meses – R$64,90", callback_data="vip_3m")],
-        [InlineKeyboardButton("👑 Vitalício – R$149,90", callback_data="vip_vitalicio")]
+        [InlineKeyboardButton("💎 1 Mês - R$24,90", callback_data="vip_1m")],
+        [InlineKeyboardButton("🔥 3 Meses - R$64,90", callback_data="vip_3m")],
+        [InlineKeyboardButton("👑 Vitalício - R$149,90", callback_data="vip_vitalicio")]
     ]
 
     await update.callback_query.message.reply_text(
@@ -64,7 +62,7 @@ def criar_pix(valor, descricao):
     }
 
     data = {
-        "transaction_amount": valor,
+        "transaction_amount": float(valor),
         "description": descricao,
         "payment_method_id": "pix",
         "payer": {
@@ -73,7 +71,11 @@ def criar_pix(valor, descricao):
     }
 
     response = requests.post(url, json=data, headers=headers)
-    return response.json()
+
+    return {
+        "status_code": response.status_code,
+        "json": response.json()
+    }
 
 # =========================
 # CALLBACK DOS PLANOS
@@ -96,27 +98,29 @@ async def callback_planos(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     pagamento = criar_pix(valor, plano)
 
-    try:
-        pix_copia_cola = pagamento["point_of_interaction"]["transaction_data"]["qr_code"]
+    # 🔴 MOSTRA ERRO REAL DO MERCADO PAGO
+    if pagamento["status_code"] != 201:
+        await query.message.reply_text(
+            f"❌ *Erro ao gerar o Pix*\n\n"
+            f"`{pagamento['json']}`",
+            parse_mode="Markdown"
+        )
+        return
 
-        await query.message.reply_text(
-            f"💳 *Pagamento PIX*\n\n"
-            f"📌 Plano: {plano}\n"
-            f"💰 Valor: R${valor}\n\n"
-            f"🔑 *Pix Copia e Cola:*\n"
-            f"`{pix_copia_cola}`\n\n"
-            f"⚠️ Após pagar, aguarde a liberação automática.",
-            parse_mode="Markdown"
-        )
-    except:
-        await query.message.reply_text(
-            "❌ Erro ao gerar o Pix.\n"
-            "Verifique se o MP_ACCESS_TOKEN está correto.",
-            parse_mode="Markdown"
-        )
+    pix_copia_cola = pagamento["json"]["point_of_interaction"]["transaction_data"]["qr_code"]
+
+    await query.message.reply_text(
+        f"💳 *Pagamento PIX*\n\n"
+        f"📌 Plano: {plano}\n"
+        f"💰 Valor: R${valor}\n\n"
+        f"🔑 *Pix Copia e Cola:*\n"
+        f"`{pix_copia_cola}`\n\n"
+        f"⚠️ Após pagar, aguarde a confirmação.",
+        parse_mode="Markdown"
+    )
 
 # =========================
-# MENU CALLBACK
+# CALLBACK MENU GERAL
 # =========================
 async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -136,30 +140,19 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text(
             "❓ *Ajuda*\n\n"
             "• Escolha um plano\n"
-            "• Faça o pagamento\n"
-            "• Aguarde liberação automática\n\n"
-            "Sistema seguro.",
+            "• Gere o Pix\n"
+            "• Faça o pagamento\n\n"
+            "Liberação automática após confirmação.",
             parse_mode="Markdown"
         )
 
 # =========================
-# COMANDO /id (DEBUG)
-# =========================
-async def id_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat = update.effective_chat
-    await update.message.reply_text(
-        f"📌 ID do chat:\n`{chat.id}`",
-        parse_mode="Markdown"
-    )
-
-# =========================
-# MAIN
+# INICIALIZAÇÃO
 # =========================
 def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("id", id_command))
     app.add_handler(CallbackQueryHandler(callback_planos, pattern="^vip_"))
     app.add_handler(CallbackQueryHandler(menu_callback))
 
