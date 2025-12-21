@@ -265,6 +265,8 @@ def main():
     app.add_handler(CommandHandler("admin", admin))
     print("🤖 Bot iniciado")
     app.run_polling(drop_pending_updates=True)
-
+    app.add_handler(CallbackQueryHandler(admin_users, pattern="^admin_users$"))
+    app.add_handler(CallbackQueryHandler(admin_logs, pattern="^admin_logs$"))
+    
 if __name__ == "__main__":
     main()
