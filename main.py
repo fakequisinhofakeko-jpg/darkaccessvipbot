@@ -95,7 +95,7 @@ def criar_pix(valor, descricao):
     return response.json()
 
 # =========================
-# CALLBACK PLANOS
+# CALLBACK PLANOS (PIX + BOTÃO JÁ PAGUEI)
 # =========================
 async def callback_planos(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -121,23 +121,52 @@ async def callback_planos(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "plano": plano,
             "valor": valor,
             "payment_id": payment_id,
-            "status": "pending"
+            "status": "pendente"
         }
         salvar_pagamentos(pagamentos)
+
+        teclado = InlineKeyboardMarkup([
+            [InlineKeyboardButton("✅ Já paguei", callback_data="ja_paguei")]
+        ])
 
         await query.message.reply_text(
             f"💳 *Pagamento PIX*\n\n"
             f"📌 Plano: {plano}\n"
             f"💰 Valor: R${valor}\n\n"
             f"`{pix}`\n\n"
-            f"⏳ Status: *PENDENTE*\n"
-            f"_(liberação automática será ativada depois)_",
+            f"⏳ Status: *PENDENTE*",
+            reply_markup=teclado,
             parse_mode="Markdown"
         )
 
-    except Exception as e:
+    except Exception:
         await query.message.reply_text(
             f"❌ Erro ao gerar Pix.\n\n{pagamento}",
+            parse_mode="Markdown"
+        )
+
+# =========================
+# CALLBACK “JÁ PAGUEI”
+# =========================
+async def confirmar_pagamento(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    user_id = str(query.from_user.id)
+    pagamentos = carregar_pagamentos()
+
+    if user_id in pagamentos:
+        pagamentos[user_id]["status"] = "em_verificacao"
+        salvar_pagamentos(pagamentos)
+
+        await query.message.reply_text(
+            "🕒 Pagamento marcado como *EM VERIFICAÇÃO*.\n\n"
+            "A liberação automática será ativada em breve.",
+            parse_mode="Markdown"
+        )
+    else:
+        await query.message.reply_text(
+            "⚠️ Nenhum pagamento encontrado para este usuário.",
             parse_mode="Markdown"
         )
 
@@ -155,8 +184,9 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text(
             "ℹ️ *Ajuda*\n\n"
             "• Escolha um plano\n"
-            "• PIX será gerado\n"
-            "• Liberação automática em breve",
+            "• Gere o Pix\n"
+            "• Clique em *Já paguei*\n"
+            "• Aguarde liberação automática",
             parse_mode="Markdown"
         )
 
@@ -168,9 +198,10 @@ def main():
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(callback_planos, pattern="^vip_"))
+    app.add_handler(CallbackQueryHandler(confirmar_pagamento, pattern="^ja_paguei$"))
     app.add_handler(CallbackQueryHandler(menu_callback))
 
-    print("🤖 Bot rodando com JSON...")
+    print("🤖 Bot rodando com JSON + Etapa 1...")
     app.run_polling()
 
 if __name__ == "__main__":
