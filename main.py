@@ -13,14 +13,26 @@ from telegram.ext import (
     ContextTypes
 )
 
-# ================== CONFIG ==================
+# ================== CONFIG SAFE ==================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-GROUP_ID = int(os.getenv("GROUP_ID"))
-ADMIN_ID = int(os.getenv("ADMIN_ID"))
 MP_ACCESS_TOKEN = os.getenv("MP_ACCESS_TOKEN")
+
+GROUP_ID_RAW = os.getenv("GROUP_ID")
+ADMIN_ID_RAW = os.getenv("ADMIN_ID")
+
+if not BOT_TOKEN:
+    raise RuntimeError("❌ BOT_TOKEN não definido")
+
+if not GROUP_ID_RAW or not ADMIN_ID_RAW:
+    raise RuntimeError("❌ GROUP_ID ou ADMIN_ID não definidos")
+
+GROUP_ID = int(GROUP_ID_RAW)
+ADMIN_ID = int(ADMIN_ID_RAW)
 
 MP_API = "https://api.mercadopago.com/v1/payments"
 DB_FILE = "database.db"
+
+print("✅ Variáveis carregadas com sucesso")
 
 # ================== PLANOS ==================
 PLANS = {
@@ -73,7 +85,7 @@ def remove_user(user_id):
 def log_payment(user_id, username, plan, value):
     cursor.execute(
         "INSERT INTO logs (user_id, username, plan, value, date) VALUES (?, ?, ?, ?, ?)",
-        (user_id, username, plan, value, datetime.now().strftime("%d/%m/%Y %H:%M"))
+        (user_id, username or "-", plan, value, datetime.now().strftime("%d/%m/%Y %H:%M"))
     )
     conn.commit()
 
@@ -140,8 +152,7 @@ async def buy_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
     existing = get_user(user_id)
     if existing and existing[0] == "vip_vitalicio":
         await q.edit_message_text(
-            "👑 *Você já possui VIP Vitalício.*\n\n"
-            "Não é necessário nova compra.",
+            "👑 *Você já possui VIP Vitalício.*\n\nAcesso permanente.",
             parse_mode="Markdown"
         )
         return
@@ -208,58 +219,7 @@ async def check_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await q.edit_message_text("⏳ Pagamento ainda não aprovado.")
 
-# ================== ADMIN ==================
-async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        return
-
-    kb = [
-        [InlineKeyboardButton("👥 Usuários ativos", callback_data="admin_users")],
-        [InlineKeyboardButton("🧾 Logs de pagamento", callback_data="admin_logs")]
-    ]
-
-    await update.message.reply_text(
-        "👑 *Painel Admin*",
-        reply_markup=InlineKeyboardMarkup(kb),
-        parse_mode="Markdown"
-    )
-
-async def admin_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    await q.answer()
-
-    cursor.execute("SELECT user_id, plan, expires_at FROM users")
-    rows = cursor.fetchall()
-
-    if not rows:
-        await q.edit_message_text("Nenhum usuário ativo.")
-        return
-
-    text = "👥 *Usuários VIP:*\n\n"
-    for uid, plan, exp in rows:
-        exp_txt = "Vitalício" if not exp else datetime.fromisoformat(exp).strftime("%d/%m/%Y")
-        text += f"🆔 {uid} — {plan} — {exp_txt}\n"
-
-    await q.edit_message_text(text, parse_mode="Markdown")
-
-async def admin_logs(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    await q.answer()
-
-    cursor.execute("SELECT user_id, plan, value, date FROM logs ORDER BY id DESC LIMIT 10")
-    rows = cursor.fetchall()
-
-    if not rows:
-        await q.edit_message_text("Nenhum pagamento registrado.")
-        return
-
-    text = "🧾 *Últimos pagamentos:*\n\n"
-    for uid, plan, value, date in rows:
-        text += f"👤 {uid}\n💳 {plan} — R${value}\n📅 {date}\n\n"
-
-    await q.edit_message_text(text, parse_mode="Markdown")
-
-# ================== EXPIRAÇÃO LOOP ==================
+# ================== EXPIRAÇÃO ==================
 async def expiration_loop(app):
     while True:
         await asyncio.sleep(300)
@@ -280,16 +240,13 @@ async def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("admin", admin))
-
     app.add_handler(CallbackQueryHandler(show_plans, pattern="^plans$"))
     app.add_handler(CallbackQueryHandler(buy_plan, pattern="^buy_"))
     app.add_handler(CallbackQueryHandler(check_payment, pattern="^check_payment$"))
-    app.add_handler(CallbackQueryHandler(admin_users, pattern="^admin_users$"))
-    app.add_handler(CallbackQueryHandler(admin_logs, pattern="^admin_logs$"))
 
     asyncio.create_task(expiration_loop(app))
 
+    print("🤖 Bot iniciado com sucesso")
     await app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
