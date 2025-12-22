@@ -14,7 +14,6 @@ ADMIN_ID = 1208316553
 GROUP_ID = -1003513694224
 PIX_KEY = "d506a3da-1aab-4dd3-8655-260b48e04bfa"
 
-# ⚠️ LINK DIRETO DA IMAGEM (IMGUR / DISCORD / RAW)
 START_IMAGE_URL = "https://i.imgur.com/YkYi0J9.png"
 
 # ================= PLANOS =================
@@ -30,8 +29,23 @@ usuarios_ativos = {}          # {id: {plano, expira_em}}
 confirmacoes_enviadas = set()
 total_arrecadado = 0.0
 
+# ================= FUNÇÃO DE LIMPEZA =================
+async def verificar_expiracoes(context: ContextTypes.DEFAULT_TYPE):
+    agora = datetime.now()
+
+    for uid, dados in list(usuarios_ativos.items()):
+        if dados["expira_em"] and dados["expira_em"] <= agora:
+            try:
+                await context.bot.ban_chat_member(GROUP_ID, uid)
+                await context.bot.unban_chat_member(GROUP_ID, uid)
+            except:
+                pass
+            usuarios_ativos.pop(uid, None)
+
 # ================= START =================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await verificar_expiracoes(context)
+
     texto = (
         "🔞 **AVISO +18**\n\n"
         "Conteúdo adulto do tipo **anime / ilustrações**.\n"
@@ -55,6 +69,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ================= ESCOLHER PLANO =================
 async def escolher_plano(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await verificar_expiracoes(context)
+
     q = update.callback_query
     await q.answer()
 
@@ -83,14 +99,12 @@ async def escolher_plano(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     teclado = [[InlineKeyboardButton("✅ Confirmar pagamento", callback_data="confirmar")]]
 
-    await q.message.reply_text(
-        texto,
-        reply_markup=InlineKeyboardMarkup(teclado),
-        parse_mode="Markdown"
-    )
+    await q.message.reply_text(texto, reply_markup=InlineKeyboardMarkup(teclado), parse_mode="Markdown")
 
 # ================= CONFIRMAR =================
 async def confirmar(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await verificar_expiracoes(context)
+
     q = update.callback_query
     await q.answer()
 
@@ -126,6 +140,8 @@ async def confirmar(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ================= MODERAR =================
 async def moderar(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await verificar_expiracoes(context)
+
     q = update.callback_query
     await q.answer()
 
@@ -168,21 +184,10 @@ async def moderar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     pagamentos_pendentes.pop(uid, None)
     confirmacoes_enviadas.discard(uid)
 
-# ================= REMOÇÃO AUTOMÁTICA =================
-async def verificar_expiracoes(context: ContextTypes.DEFAULT_TYPE):
-    agora = datetime.now()
-
-    for uid, dados in list(usuarios_ativos.items()):
-        if dados["expira_em"] and dados["expira_em"] <= agora:
-            try:
-                await context.bot.ban_chat_member(GROUP_ID, uid)
-                await context.bot.unban_chat_member(GROUP_ID, uid)
-            except:
-                pass
-            usuarios_ativos.pop(uid, None)
-
 # ================= ADMIN =================
 async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await verificar_expiracoes(context)
+
     if update.effective_user.id != ADMIN_ID:
         return
 
@@ -202,8 +207,6 @@ def main():
     app.add_handler(CallbackQueryHandler(moderar, pattern="^(aprovar|rejeitar)_"))
     app.add_handler(CallbackQueryHandler(confirmar, pattern="^confirmar$"))
     app.add_handler(CallbackQueryHandler(escolher_plano, pattern="^plano_"))
-
-    app.job_queue.run_repeating(verificar_expiracoes, interval=3600, first=60)
 
     app.run_polling()
 
