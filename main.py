@@ -9,10 +9,13 @@ from datetime import datetime, timedelta
 import time
 
 # ================= CONFIG =================
-BOT_TOKEN = "SEU_TOKEN_AQUI"
+BOT_TOKEN = "8444138111:AAGuhgOzBtMsrNRQ1Zj2_pKuquMXi7jcHGo"
 ADMIN_ID = 1208316553
 GROUP_ID = -1003513694224
 PIX_KEY = "d506a3da-1aab-4dd3-8655-260b48e04bfa"
+
+# ⚠️ LINK DIRETO DA IMAGEM (IMGUR / DISCORD / RAW)
+START_IMAGE_URL = "https://i.imgur.com/YkYi0J9.png"
 
 # ================= PLANOS =================
 PLANOS = {
@@ -23,18 +26,18 @@ PLANOS = {
 
 # ================= DADOS =================
 pagamentos_pendentes = {}
-usuarios_ativos = {}          # controle de plano ativo
-confirmacoes_enviadas = set() # anti-spam
+usuarios_ativos = {}          # {id: {plano, expira_em}}
+confirmacoes_enviadas = set()
 total_arrecadado = 0.0
 
 # ================= START =================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     texto = (
-        "🔞 AVISO +18\n"
-        "Conteúdo adulto do tipo anime/ilustrado.\n"
-        "Ao continuar, você confirma ser maior de 18 anos.\n\n"
-        "💳 Pagamento via PIX\n"
-        "🔒 Acesso VIP"
+        "🔞 **AVISO +18**\n\n"
+        "Conteúdo adulto do tipo **anime / ilustrações**.\n"
+        "Ao continuar, você confirma ser **maior de 18 anos**.\n\n"
+        "💳 Pagamento via **PIX**\n"
+        "🔒 Acesso **VIP**"
     )
 
     teclado = [
@@ -43,7 +46,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("💎 VIP Vitalício", callback_data="plano_vip_vitalicio")],
     ]
 
-    await update.message.reply_text(texto, reply_markup=InlineKeyboardMarkup(teclado))
+    await update.message.reply_photo(
+        photo=START_IMAGE_URL,
+        caption=texto,
+        reply_markup=InlineKeyboardMarkup(teclado),
+        parse_mode="Markdown"
+    )
 
 # ================= ESCOLHER PLANO =================
 async def escolher_plano(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -54,7 +62,6 @@ async def escolher_plano(update: Update, context: ContextTypes.DEFAULT_TYPE):
     plano_id = q.data.replace("plano_", "")
     plano = PLANOS[plano_id]
 
-    # 🔒 BLOQUEIO DE PLANO ATIVO
     ativo = usuarios_ativos.get(user_id)
     if ativo:
         if ativo["plano"] == plano_id:
@@ -68,38 +75,38 @@ async def escolher_plano(update: Update, context: ContextTypes.DEFAULT_TYPE):
     pagamentos_pendentes[user_id] = plano | {"id": plano_id}
 
     texto = (
-        f"📦 {plano['nome']}\n"
+        f"📦 **{plano['nome']}**\n"
         f"💰 Valor: R${plano['valor']}\n\n"
-        f"🔑 PIX Copia e Cola:\n{PIX_KEY}\n\n"
+        f"🔑 **PIX Copia e Cola:**\n`{PIX_KEY}`\n\n"
         "Após pagar, toque em **Confirmar pagamento**."
     )
 
     teclado = [[InlineKeyboardButton("✅ Confirmar pagamento", callback_data="confirmar")]]
 
-    await q.message.reply_text(texto, reply_markup=InlineKeyboardMarkup(teclado), parse_mode="Markdown")
+    await q.message.reply_text(
+        texto,
+        reply_markup=InlineKeyboardMarkup(teclado),
+        parse_mode="Markdown"
+    )
 
-# ================= CONFIRMAR PAGAMENTO =================
+# ================= CONFIRMAR =================
 async def confirmar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
 
     user_id = q.from_user.id
 
-    # 🛑 ANTI-SPAM
     if user_id in confirmacoes_enviadas:
         return
 
     plano = pagamentos_pendentes.get(user_id)
     if not plano:
-        await q.message.reply_text("❌ Nenhum pagamento pendente encontrado.")
+        await q.message.reply_text("❌ Nenhum pagamento pendente.")
         return
 
     confirmacoes_enviadas.add(user_id)
 
-    await q.message.reply_text(
-        "⏳ Pagamento enviado para aprovação.\n"
-        "Assim que for confirmado, o acesso será liberado."
-    )
+    await q.message.reply_text("⏳ Pagamento enviado para aprovação.")
 
     teclado_admin = [[
         InlineKeyboardButton("✅ Aprovar", callback_data=f"aprovar_{user_id}"),
@@ -107,8 +114,8 @@ async def confirmar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]]
 
     await context.bot.send_message(
-        chat_id=ADMIN_ID,
-        text=(
+        ADMIN_ID,
+        (
             "💳 PAGAMENTO PENDENTE\n\n"
             f"👤 ID: {user_id}\n"
             f"📦 Plano: {plano['nome']}\n"
@@ -117,7 +124,7 @@ async def confirmar(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=InlineKeyboardMarkup(teclado_admin)
     )
 
-# ================= APROVAR / REJEITAR =================
+# ================= MODERAR =================
 async def moderar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
@@ -127,24 +134,21 @@ async def moderar(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     plano = pagamentos_pendentes.get(uid)
     if not plano:
-        await q.message.reply_text("❌ Pedido não encontrado.")
         return
 
     global total_arrecadado
 
     if acao == "aprovar":
-        # ⏳ EXPIRAÇÃO DO LINK (10 min)
         link = await context.bot.create_chat_invite_link(
             chat_id=GROUP_ID,
             member_limit=1,
             expire_date=int(time.time()) + 600
         )
 
-        # 📅 REGISTRA PLANO ATIVO
         if plano["dias"]:
             expira = datetime.now() + timedelta(days=plano["dias"])
         else:
-            expira = None  # vitalício
+            expira = None
 
         usuarios_ativos[uid] = {
             "plano": plano["id"],
@@ -155,26 +159,51 @@ async def moderar(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await context.bot.send_message(
             uid,
-            f"✅ Pagamento aprovado!\n\n"
-            f"🔗 Acesso ao grupo (válido por 10 min):\n{link.invite_link}"
+            f"✅ Pagamento aprovado!\n\n🔗 Link (10 min):\n{link.invite_link}"
         )
 
-        await q.message.reply_text("✅ Aprovado e link enviado.")
     else:
         await context.bot.send_message(uid, "❌ Pagamento rejeitado.")
-        await q.message.reply_text("❌ Rejeitado.")
 
     pagamentos_pendentes.pop(uid, None)
     confirmacoes_enviadas.discard(uid)
+
+# ================= REMOÇÃO AUTOMÁTICA =================
+async def verificar_expiracoes(context: ContextTypes.DEFAULT_TYPE):
+    agora = datetime.now()
+
+    for uid, dados in list(usuarios_ativos.items()):
+        if dados["expira_em"] and dados["expira_em"] <= agora:
+            try:
+                await context.bot.ban_chat_member(GROUP_ID, uid)
+                await context.bot.unban_chat_member(GROUP_ID, uid)
+            except:
+                pass
+            usuarios_ativos.pop(uid, None)
+
+# ================= ADMIN =================
+async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+
+    await update.message.reply_text(
+        f"👑 ADMIN\n\n"
+        f"👥 Ativos: {len(usuarios_ativos)}\n"
+        f"⏳ Pendentes: {len(pagamentos_pendentes)}\n"
+        f"💰 Total: R${total_arrecadado:.2f}"
+    )
 
 # ================= MAIN =================
 def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("admin", admin))
     app.add_handler(CallbackQueryHandler(moderar, pattern="^(aprovar|rejeitar)_"))
     app.add_handler(CallbackQueryHandler(confirmar, pattern="^confirmar$"))
     app.add_handler(CallbackQueryHandler(escolher_plano, pattern="^plano_"))
+
+    app.job_queue.run_repeating(verificar_expiracoes, interval=3600, first=60)
 
     app.run_polling()
 
