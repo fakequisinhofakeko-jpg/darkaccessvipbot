@@ -50,11 +50,18 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await verificar_expiracoes(context)
 
     texto = (
-        "⚠️ **AVISO DE CONTEÚDO ADULTO (+18)**\n\n"
-        "🔞 O grupo contém conteúdo adulto (Anime).\n\n"
-        "✔️ Apenas para maiores de 18 anos\n\n"
-        "💳 Pagamento via PIX\n"
-        "🔒 Acesso VIP"
+    "⚠️ **AVISO DE CONTEÚDO ADULTO (+18)**\n\n"
+    "🔞 Este grupo contém **conteúdo adulto explícito do tipo Anime**,\n"
+    "destinado **exclusivamente a maiores de 18 anos**.\n\n"
+    "Ao prosseguir e adquirir o acesso VIP, você declara que:\n\n"
+    "✔️ Possui **18 anos ou mais**\n"
+    "✔️ Está ciente da **natureza adulta do conteúdo**\n"
+    "✔️ Acessa por **livre e espontânea vontade**\n"
+    "✔️ Assume total responsabilidade pelo acesso\n\n"
+    "🚫 É **terminantemente proibido** o acesso por menores de idade.\n"
+    "📵 É proibido **compartilhar, redistribuir ou revender** o conteúdo.\n\n"
+    "💳 Pagamento via **PIX**\n"
+    "🔒 Acesso **VIP privado e exclusivo**"
     )
 
     teclado = [
