@@ -240,8 +240,8 @@ async def receber_id_remocao(update: Update, context: ContextTypes.DEFAULT_TYPE)
 def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("admin", admin))
+    app.add_handler(CommandHandler("start", start, filters=filters.ChatType.PRIVATE))
+    app.add_handler(CommandHandler("admin", admin, filters=filters.ChatType.PRIVATE))
     app.add_handler(CallbackQueryHandler(escolher_plano, pattern="^plano_"))
     app.add_handler(CallbackQueryHandler(confirmar, pattern="^confirmar$"))
     app.add_handler(CallbackQueryHandler(moderar, pattern="^(aprovar|rejeitar)_"))
