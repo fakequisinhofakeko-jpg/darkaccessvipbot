@@ -51,16 +51,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     texto = (
         "⚠️ **AVISO DE CONTEÚDO ADULTO (+18)**\n\n"
-        "🔞 O grupo que você irá acessar contém **conteúdo adulto do tipo (Anime)**.\n\n"
-        "Ao prosseguir, você declara que:\n\n"
-        "✔️ Tem **18 anos ou mais**\n"
-        "✔️ Está ciente de que o conteúdo é **adulto e explícito**\n"
-        "✔️ Acessa por **livre e espontânea vontade**\n"
-        "✔️ Assume **total responsabilidade** pelo acesso\n\n"
-        "🚫 **É proibido o acesso por menores de idade.**\n"
-        "📵 **Não compartilhe o conteúdo com terceiros.**\n\n"
-        "💳 Pagamento via **PIX**\n"
-        "🔒 Acesso **VIP**"
+        "🔞 Conteúdo adulto (Anime).\n\n"
+        "Ao prosseguir, você confirma que é maior de 18 anos.\n\n"
+        "💳 Pagamento via PIX\n"
+        "🔒 Acesso VIP"
     )
 
     teclado = [
@@ -73,6 +67,17 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         photo=START_IMAGE_URL,
         caption=texto,
         reply_markup=InlineKeyboardMarkup(teclado),
+        parse_mode="Markdown"
+    )
+
+    # 🔔 AVISO ADMIN – NOVO USUÁRIO
+    await context.bot.send_message(
+        chat_id=ADMIN_ID,
+        text=(
+            "🚨 *Novo usuário iniciou o bot*\n\n"
+            f"👤 Nome: {update.effective_user.full_name}\n"
+            f"🆔 ID: `{update.effective_user.id}`"
+        ),
         parse_mode="Markdown"
     )
 
@@ -93,6 +98,19 @@ async def escolher_plano(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     pagamentos_pendentes[uid] = plano
+
+    # 🔔 AVISO ADMIN – ESCOLHA DE PLANO
+    await context.bot.send_message(
+        chat_id=ADMIN_ID,
+        text=(
+            "💳 *Novo pedido de compra*\n\n"
+            f"👤 Usuário: {q.from_user.full_name}\n"
+            f"🆔 ID: `{uid}`\n"
+            f"📦 Plano: {plano['id']}\n"
+            f"💰 Valor: R${plano['valor']:.2f}"
+        ),
+        parse_mode="Markdown"
+    )
 
     texto = (
         f"📦 **{plano['nome']}**\n"
@@ -124,6 +142,18 @@ async def confirmar(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     confirmacoes_enviadas.add(uid)
+
+    # 🔔 AVISO ADMIN – COMPROVANTE ENVIADO
+    await context.bot.send_message(
+        chat_id=ADMIN_ID,
+        text=(
+            "📸 *Comprovante enviado*\n\n"
+            f"👤 Usuário: {q.from_user.full_name}\n"
+            f"🆔 ID: `{uid}`\n"
+            "⚠️ Aguardando aprovação."
+        ),
+        parse_mode="Markdown"
+    )
 
     teclado = [[
         InlineKeyboardButton("✅ Aprovar", callback_data=f"aprovar_{uid}"),
