@@ -21,7 +21,7 @@ START_IMAGE_URL = "https://crooked-pink-lw2jbcf2ie-06nqwkliyr.edgeone.dev/0c4c70
 # ================= PLANOS =================
 PLANOS = {
     "vip1": {"id": "vip1", "nome": "VIP 1 Mês", "valor": 25.90, "dias": 30},
-    "vip3": {"id": "vip6", "nome": "VIP 6 Meses", "valor": 55.90, "dias": 90},
+    "vip6": {"id": "vip6", "nome": "VIP 6 Meses", "valor": 55.90, "dias": 90},
     "vip_vitalicio": {"id": "vip_vitalicio", "nome": "VIP Vitalício", "valor": 99.90, "dias": None},
 }
 
