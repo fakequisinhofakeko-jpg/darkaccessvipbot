@@ -21,8 +21,8 @@ START_IMAGE_URL = "https://crooked-pink-lw2jbcf2ie-06nqwkliyr.edgeone.dev/0c4c70
 # ================= PLANOS =================
 PLANOS = {
     "vip1": {"id": "vip1", "nome": "VIP 1 Mês", "valor": 25.90, "dias": 30},
-    "vip3": {"id": "vip3", "nome": "VIP 3 Meses", "valor": 55.90, "dias": 90},
-    "vip_vitalicio": {"id": "vip_vitalicio", "nome": "VIP Vitalício", "valor": 119.90, "dias": None},
+    "vip3": {"id": "vip6", "nome": "VIP 6 Meses", "valor": 55.90, "dias": 90},
+    "vip_vitalicio": {"id": "vip_vitalicio", "nome": "VIP Vitalício", "valor": 99.90, "dias": None},
 }
 
 # ================= DADOS =================
@@ -66,7 +66,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     teclado = [
         [InlineKeyboardButton("🔥 VIP 1 Mês", callback_data="plano_vip1")],
-        [InlineKeyboardButton("🔥 VIP 3 Meses", callback_data="plano_vip3")],
+        [InlineKeyboardButton("🔥 VIP 6 Meses", callback_data="plano_vip6")],
         [InlineKeyboardButton("💎 VIP Vitalício", callback_data="plano_vip_vitalicio")],
     ]
 
