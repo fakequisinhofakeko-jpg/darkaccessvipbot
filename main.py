@@ -18,6 +18,8 @@ PIX_KEY = "d506a3da-1aab-4dd3-8655-260b48e04bfa"
 
 START_IMAGE_URL = "https://crooked-pink-lw2jbcf2ie-06nqwkliyr.edgeone.dev/0c4c705a6047a4fcb4d85b8d2f27660c.jpg"
 
+PENDENTE_TTL = 15 * 60  # 15 minutos
+
 # ================= PLANOS =================
 PLANOS = {
     "vip1": {"id": "vip1", "nome": "VIP 1 Mês", "valor": 25.90, "dias": 30},
@@ -26,9 +28,10 @@ PLANOS = {
 }
 
 # ================= DADOS =================
-pagamentos_pendentes = {}
+pagamentos_pendentes = {}      # uid -> {plano, created_at}
 usuarios_ativos = {}
 confirmacoes_enviadas = set()
+comprovantes_recebidos = set()
 total_arrecadado = 0.0
 pagamentos_aprovados = 0
 admin_aguardando_id = set()
@@ -51,17 +54,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     texto = (
         "⚠️ **AVISO DE CONTEÚDO ADULTO (+18)**\n\n"
-        "🔞 Este grupo contém **conteúdo adulto explícito do tipo Anime**,\n"
-        "destinado **exclusivamente a maiores de 18 anos**.\n\n"
-        "Ao prosseguir e adquirir o acesso VIP, você declara que:\n\n"
-        "✔️ Possui **18 anos ou mais**\n"
-        "✔️ Está ciente da **natureza adulta do conteúdo**\n"
-        "✔️ Acessa por **livre e espontânea vontade**\n"
-        "✔️ Assume total responsabilidade pelo acesso\n\n"
-        "🚫 É **terminantemente proibido** o acesso por menores de idade.\n"
-        "📵 É proibido **compartilhar, redistribuir ou revender** o conteúdo.\n\n"
+        "🔞 Conteúdo adulto explícito do tipo Anime\n\n"
         "💳 Pagamento via **PIX**\n"
-        "🔒 Acesso **VIP privado e exclusivo**"
+        "📸 Envie o comprovante\n"
+        "⚠️ Confirmações sem pagamento serão rejeitadas"
     )
 
     teclado = [
@@ -79,8 +75,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ================= ESCOLHER PLANO =================
 async def escolher_plano(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await verificar_expiracoes(context)
-
     q = update.callback_query
     await q.answer()
 
@@ -88,27 +82,34 @@ async def escolher_plano(update: Update, context: ContextTypes.DEFAULT_TYPE):
     plano_id = q.data.replace("plano_", "")
     plano = PLANOS[plano_id]
 
-    ativo = usuarios_ativos.get(uid)
-    if ativo and ativo["plano"] == plano_id and (ativo["expira_em"] is None or ativo["expira_em"] > datetime.now()):
-        await q.message.reply_text("⚠️ Você já possui esse plano ativo.")
-        return
-
-    pagamentos_pendentes[uid] = plano
+    pagamentos_pendentes[uid] = {
+        "plano": plano,
+        "created_at": time.time()
+    }
 
     texto = (
         f"📦 **{plano['nome']}**\n"
         f"💰 Valor: R${plano['valor']}\n\n"
-        f"🔑 **PIX Copia e Cola:**\n`{PIX_KEY}`\n\n"
-        "📸 **Logo após o pagamento, envie o comprovante**\n"
-        "e em seguida toque em **Confirmar pagamento**."
+        f"🔑 **PIX:**\n`{PIX_KEY}`\n\n"
+        "📸 **Envie o comprovante aqui no chat**\n"
+        "⚠️ O botão de confirmação só aparecerá após o envio."
     )
 
-    await q.message.reply_text(
-        texto,
+    await q.message.reply_text(texto, parse_mode="Markdown")
+
+# ================= RECEBER COMPROVANTE =================
+async def receber_comprovante(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    if uid not in pagamentos_pendentes:
+        return
+
+    comprovantes_recebidos.add(uid)
+
+    await update.message.reply_text(
+        "📸 Comprovante recebido.\nAgora clique para confirmar.",
         reply_markup=InlineKeyboardMarkup(
             [[InlineKeyboardButton("✅ Confirmar pagamento", callback_data="confirmar")]]
-        ),
-        parse_mode="Markdown"
+        )
     )
 
 # ================= CONFIRMAR =================
@@ -117,15 +118,23 @@ async def confirmar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await q.answer()
 
     uid = q.from_user.id
-    if uid in confirmacoes_enviadas:
+    dados = pagamentos_pendentes.get(uid)
+
+    if not dados:
+        await q.message.reply_text("❌ Pedido expirado ou inexistente.")
         return
 
-    plano = pagamentos_pendentes.get(uid)
-    if not plano:
-        await q.message.reply_text("❌ Nenhum pagamento pendente.")
+    if uid not in comprovantes_recebidos:
+        await q.message.reply_text("📸 Envie o comprovante primeiro.")
         return
 
-    confirmacoes_enviadas.add(uid)
+    if time.time() - dados["created_at"] > PENDENTE_TTL:
+        pagamentos_pendentes.pop(uid, None)
+        comprovantes_recebidos.discard(uid)
+        await q.message.reply_text("⏳ Pedido expirado. Gere outro.")
+        return
+
+    plano = dados["plano"]
 
     teclado = [[
         InlineKeyboardButton("✅ Aprovar", callback_data=f"aprovar_{uid}"),
@@ -134,11 +143,11 @@ async def confirmar(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await context.bot.send_message(
         ADMIN_ID,
-        f"💳 PAGAMENTO PENDENTE\n\n👤 ID: {uid}\n📦 {plano['nome']}\n💰 R${plano['valor']}",
+        f"🚨 NOVO PAGAMENTO\n\n👤 ID: {uid}\n📦 {plano['nome']}\n💰 R${plano['valor']}",
         reply_markup=InlineKeyboardMarkup(teclado)
     )
 
-    await q.message.reply_text("⏳ Pagamento enviado para aprovação.")
+    await q.message.reply_text("⏳ Enviado para aprovação.")
 
 # ================= MODERAR =================
 async def moderar(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -147,18 +156,18 @@ async def moderar(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     acao, uid = q.data.split("_")
     uid = int(uid)
+    dados = pagamentos_pendentes.get(uid)
 
-    plano = pagamentos_pendentes.get(uid)
-    if not plano:
+    if not dados:
+        await q.message.reply_text("⚠️ Pedido já encerrado.")
         return
 
+    plano = dados["plano"]
     global total_arrecadado, pagamentos_aprovados
 
     if acao == "aprovar":
         link = await context.bot.create_chat_invite_link(
-            GROUP_ID,
-            member_limit=1,
-            expire_date=int(time.time()) + 600
+            GROUP_ID, member_limit=1, expire_date=int(time.time()) + 600
         )
 
         expira = None if plano["dias"] is None else datetime.now() + timedelta(days=plano["dias"])
@@ -167,107 +176,28 @@ async def moderar(update: Update, context: ContextTypes.DEFAULT_TYPE):
         total_arrecadado += plano["valor"]
         pagamentos_aprovados += 1
 
-        await context.bot.send_message(uid, f"✅ Aprovado!\n\n🔗 {link.invite_link}")
+        await context.bot.send_message(uid, f"✅ Aprovado!\n🔗 {link.invite_link}")
+        await q.message.reply_text("✅ Pedido aprovado.")
     else:
         await context.bot.send_message(uid, "❌ Pagamento rejeitado.")
+        await q.message.reply_text("❌ Pedido rejeitado.")
+
+    await q.message.edit_reply_markup(reply_markup=None)
 
     pagamentos_pendentes.pop(uid, None)
+    comprovantes_recebidos.discard(uid)
     confirmacoes_enviadas.discard(uid)
-
-# ================= ADMIN =================
-async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        return
-
-    teclado = [
-        [InlineKeyboardButton("👥 Usuários ativos", callback_data="adm_ativos")],
-        [InlineKeyboardButton("⏳ Pagamentos pendentes", callback_data="adm_pendentes")],
-        [InlineKeyboardButton("✅ Pagamentos aprovados", callback_data="adm_aprovados")],
-        [InlineKeyboardButton("💰 Total arrecadado", callback_data="adm_total")],
-        [InlineKeyboardButton("🗑️ Remover usuário", callback_data="adm_remover")],
-    ]
-
-    await update.message.reply_text(
-        "👑 **Painel Admin**",
-        reply_markup=InlineKeyboardMarkup(teclado),
-        parse_mode="Markdown"
-    )
-
-# ================= CALLBACKS ADMIN =================
-async def admin_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    await q.answer()
-
-    if q.data == "adm_remover":
-        admin_aguardando_id.add(q.from_user.id)
-        await q.message.reply_text("🗑️ Envie o **ID do usuário** para remover.")
-        return
-
-    texto = {
-        "adm_ativos": f"👥 Ativos: {len(usuarios_ativos)}",
-        "adm_pendentes": f"⏳ Pendentes: {len(pagamentos_pendentes)}",
-        "adm_aprovados": f"✅ Aprovados: {pagamentos_aprovados}",
-        "adm_total": f"💰 Total: R${total_arrecadado:.2f}"
-    }.get(q.data, "❌ Opção inválida.")
-
-    await q.message.reply_text(texto)
-
-# ================= REMOVER USUÁRIO =================
-async def receber_id_remocao(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID or update.effective_user.id not in admin_aguardando_id:
-        return
-
-    try:
-        uid = int(update.message.text.strip())
-    except:
-        await update.message.reply_text("❌ ID inválido.")
-        return
-
-    try:
-        await context.bot.ban_chat_member(GROUP_ID, uid)
-        await context.bot.unban_chat_member(GROUP_ID, uid)
-    except:
-        pass
-
-    usuarios_ativos.pop(uid, None)
-    pagamentos_pendentes.pop(uid, None)
-    admin_aguardando_id.discard(update.effective_user.id)
-
-    await update.message.reply_text(f"✅ Usuário `{uid}` removido.", parse_mode="Markdown")
-
-# ================= LIMPAR CHAT DO BOT (USUÁRIO ATIVO) =================
-async def apagar_mensagem_usuario_ativo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message:
-        return
-
-    user_id = update.message.from_user.id
-
-    if user_id in usuarios_ativos:
-        try:
-            await update.message.delete()
-        except:
-            pass
 
 # ================= MAIN =================
 def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start, filters=filters.ChatType.PRIVATE))
-    app.add_handler(CommandHandler("admin", admin, filters=filters.ChatType.PRIVATE))
     app.add_handler(CallbackQueryHandler(escolher_plano, pattern="^plano_"))
     app.add_handler(CallbackQueryHandler(confirmar, pattern="^confirmar$"))
     app.add_handler(CallbackQueryHandler(moderar, pattern="^(aprovar|rejeitar)_"))
-    app.add_handler(CallbackQueryHandler(admin_callbacks, pattern="^adm_"))
 
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, receber_id_remocao))
-
-    # 🔥 APAGA MENSAGENS DE USUÁRIOS JÁ APROVADOS
-    app.add_handler(
-        MessageHandler(
-            filters.TEXT & filters.ChatType.PRIVATE,
-            apagar_mensagem_usuario_ativo
-        )
-    )
+    app.add_handler(MessageHandler(filters.PHOTO & filters.ChatType.PRIVATE, receber_comprovante))
 
     app.run_polling()
 
