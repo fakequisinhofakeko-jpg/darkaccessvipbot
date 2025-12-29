@@ -136,6 +136,11 @@ async def confirmar(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     plano = dados["plano"]
 
+    # 🔥 AQUI FOI ADICIONADO NOME + USERNAME
+    user = q.from_user
+    nome = user.full_name
+    username = f"@{user.username}" if user.username else "(sem @)"
+
     teclado = [[
         InlineKeyboardButton("✅ Aprovar", callback_data=f"aprovar_{uid}"),
         InlineKeyboardButton("❌ Rejeitar", callback_data=f"rejeitar_{uid}")
@@ -143,7 +148,13 @@ async def confirmar(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await context.bot.send_message(
         ADMIN_ID,
-        f"🚨 NOVO PAGAMENTO\n\n👤 ID: {uid}\n📦 {plano['nome']}\n💰 R${plano['valor']}",
+        (
+            "🚨 NOVO PAGAMENTO\n\n"
+            f"👤 {nome} {username}\n"
+            f"🆔 ID: {uid}\n"
+            f"📦 {plano['nome']}\n"
+            f"💰 R${plano['valor']}"
+        ),
         reply_markup=InlineKeyboardMarkup(teclado)
     )
 
@@ -196,7 +207,6 @@ def main():
     app.add_handler(CallbackQueryHandler(escolher_plano, pattern="^plano_"))
     app.add_handler(CallbackQueryHandler(confirmar, pattern="^confirmar$"))
     app.add_handler(CallbackQueryHandler(moderar, pattern="^(aprovar|rejeitar)_"))
-
     app.add_handler(MessageHandler(filters.PHOTO & filters.ChatType.PRIVATE, receber_comprovante))
 
     app.run_polling()
