@@ -23,8 +23,8 @@ PENDENTE_TTL = 15 * 60  # 15 minutos
 # ================= PLANOS =================
 PLANOS = {
     "vip1": {"id": "vip1", "nome": "VIP 1 Mês", "valor": 25.00, "dias": 30},
-    "vip6": {"id": "vip6", "nome": "VIP 6 Meses", "valor": 50.00, "dias": 90},
-    "vip_vitalicio": {"id": "vip_vitalicio", "nome": "VIP Vitalício", "valor": 60.00, "dias": None},
+    "vip6": {"id": "vip6", "nome": "VIP 6 Meses", "valor": 40.00, "dias": 90},
+    "vip_vitalicio": {"id": "vip_vitalicio", "nome": "VIP Vitalício", "valor": 50.00, "dias": None},
 }
 
 # ================= DADOS =================
