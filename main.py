@@ -16,9 +16,7 @@ ADMIN_ID = 1208316553
 GROUP_ID = -1003325505558
 PIX_KEY = "d506a3da-1aab-4dd3-8655-260b48e04bfa"
 
-# 🔥 IMAGEM REAL ADULTO
 START_IMAGE_URL = "https://i.postimg.cc/X7tcHPD0/images.jpg"
-
 PENDENTE_TTL = 15 * 60  # 15 minutos
 
 # ================= PLANOS =================
@@ -36,6 +34,10 @@ total_arrecadado = 0.0
 pagamentos_aprovados = 0
 
 # ================= UTIL =================
+def is_admin(update: Update):
+    return update.effective_user.id == ADMIN_ID
+
+
 async def verificar_expiracoes(context):
     agora = datetime.now()
     for uid, dados in list(usuarios_ativos.items()):
@@ -79,23 +81,21 @@ async def escolher_plano(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await q.answer()
 
     uid = q.from_user.id
-    plano_id = q.data.replace("plano_", "")
-    plano = PLANOS[plano_id]
+    plano = PLANOS[q.data.replace("plano_", "")]
 
     pagamentos_pendentes[uid] = {
         "plano": plano,
         "created_at": time.time()
     }
 
-    texto = (
+    await q.message.reply_text(
         f"📦 **{plano['nome']}**\n"
         f"💰 Valor: R${plano['valor']}\n\n"
         f"🔑 **PIX:**\n`{PIX_KEY}`\n\n"
-        "📸 **Envie o comprovante aqui no chat**\n"
-        "⚠️ O botão de confirmação só aparecerá após o envio."
+        "📸 Envie o comprovante aqui no chat\n"
+        "⚠️ O botão de confirmação só aparecerá após o envio.",
+        parse_mode="Markdown"
     )
-
-    await q.message.reply_text(texto, parse_mode="Markdown")
 
 # ================= RECEBER COMPROVANTE =================
 async def receber_comprovante(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -120,18 +120,8 @@ async def confirmar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = q.from_user.id
     dados = pagamentos_pendentes.get(uid)
 
-    if not dados:
-        await q.message.reply_text("❌ Pedido expirado ou inexistente.")
-        return
-
-    if uid not in comprovantes_recebidos:
-        await q.message.reply_text("📸 Envie o comprovante primeiro.")
-        return
-
-    if time.time() - dados["created_at"] > PENDENTE_TTL:
-        pagamentos_pendentes.pop(uid, None)
-        comprovantes_recebidos.discard(uid)
-        await q.message.reply_text("⏳ Pedido expirado. Gere outro.")
+    if not dados or uid not in comprovantes_recebidos:
+        await q.message.reply_text("❌ Envie o comprovante primeiro.")
         return
 
     plano = dados["plano"]
@@ -139,21 +129,19 @@ async def confirmar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     nome = user.full_name
     username = f"@{user.username}" if user.username else "(sem @)"
 
-    teclado = [[
-        InlineKeyboardButton("✅ Aprovar", callback_data=f"aprovar_{uid}"),
-        InlineKeyboardButton("❌ Rejeitar", callback_data=f"rejeitar_{uid}")
-    ]]
-
     await context.bot.send_message(
         ADMIN_ID,
-        (
-            "🚨 NOVO PAGAMENTO\n\n"
-            f"👤 {nome} {username}\n"
-            f"🆔 ID: {uid}\n"
-            f"📦 {plano['nome']}\n"
-            f"💰 R${plano['valor']}"
-        ),
-        reply_markup=InlineKeyboardMarkup(teclado)
+        f"🚨 NOVO PAGAMENTO\n\n"
+        f"👤 {nome} {username}\n"
+        f"🆔 {uid}\n"
+        f"📦 {plano['nome']}\n"
+        f"💰 R${plano['valor']}",
+        reply_markup=InlineKeyboardMarkup(
+            [[
+                InlineKeyboardButton("✅ Aprovar", callback_data=f"aprovar_{uid}"),
+                InlineKeyboardButton("❌ Rejeitar", callback_data=f"rejeitar_{uid}")
+            ]]
+        )
     )
 
     await q.message.reply_text("⏳ Enviado para aprovação.")
@@ -165,42 +153,70 @@ async def moderar(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     acao, uid = q.data.split("_")
     uid = int(uid)
-    dados = pagamentos_pendentes.get(uid)
-
-    if not dados:
-        await q.message.reply_text("⚠️ Pedido já encerrado.")
-        return
-
-    plano = dados["plano"]
-    global total_arrecadado, pagamentos_aprovados
+    plano = pagamentos_pendentes[uid]["plano"]
 
     if acao == "aprovar":
-        link = await context.bot.create_chat_invite_link(
-            GROUP_ID, member_limit=1, expire_date=int(time.time()) + 600
-        )
-
+        link = await context.bot.create_chat_invite_link(GROUP_ID, member_limit=1)
         expira = None if plano["dias"] is None else datetime.now() + timedelta(days=plano["dias"])
         usuarios_ativos[uid] = {"plano": plano["id"], "expira_em": expira}
-
-        total_arrecadado += plano["valor"]
-        pagamentos_aprovados += 1
-
-        await context.bot.send_message(uid, f"✅ Aprovado!\n🔗 {link.invite_link}")
-        await q.message.reply_text("✅ Pedido aprovado.")
+        await context.bot.send_message(uid, f"✅ Acesso liberado\n🔗 {link.invite_link}")
     else:
         await context.bot.send_message(uid, "❌ Pagamento rejeitado.")
-        await q.message.reply_text("❌ Pedido rejeitado.")
-
-    await q.message.edit_reply_markup(reply_markup=None)
 
     pagamentos_pendentes.pop(uid, None)
     comprovantes_recebidos.discard(uid)
+    await q.message.edit_reply_markup(None)
+
+# ================= PAINEL ADM =================
+async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update):
+        return
+
+    await update.message.reply_text(
+        f"👑 PAINEL ADM\n\n"
+        f"👥 Ativos: {len(usuarios_ativos)}\n"
+        f"⏳ Pendentes: {len(pagamentos_pendentes)}\n"
+        f"💰 Total: R${total_arrecadado:.2f}\n"
+        f"✅ Aprovados: {pagamentos_aprovados}"
+    )
+
+async def clientes(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update):
+        return
+    texto = "👥 CLIENTES ATIVOS\n\n"
+    for uid, d in usuarios_ativos.items():
+        texto += f"{uid} — expira {d['expira_em']}\n"
+    await update.message.reply_text(texto or "Nenhum cliente.")
+
+async def pendentes(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update):
+        return
+    texto = "⏳ PENDENTES\n\n"
+    for uid, d in pagamentos_pendentes.items():
+        texto += f"{uid} — {d['plano']['nome']}\n"
+    await update.message.reply_text(texto or "Nenhum pendente.")
+
+async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update):
+        return
+    msg = " ".join(context.args)
+    for uid in usuarios_ativos:
+        try:
+            await context.bot.send_message(uid, f"📢 {msg}")
+        except:
+            pass
+    await update.message.reply_text("📢 Mensagem enviada.")
 
 # ================= MAIN =================
 def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start, filters=filters.ChatType.PRIVATE))
+    app.add_handler(CommandHandler("admin", admin, filters=filters.ChatType.PRIVATE))
+    app.add_handler(CommandHandler("clientes", clientes, filters=filters.ChatType.PRIVATE))
+    app.add_handler(CommandHandler("pendentes", pendentes, filters=filters.ChatType.PRIVATE))
+    app.add_handler(CommandHandler("broadcast", broadcast, filters=filters.ChatType.PRIVATE))
+
     app.add_handler(CallbackQueryHandler(escolher_plano, pattern="^plano_"))
     app.add_handler(CallbackQueryHandler(confirmar, pattern="^confirmar$"))
     app.add_handler(CallbackQueryHandler(moderar, pattern="^(aprovar|rejeitar)_"))
