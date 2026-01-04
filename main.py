@@ -21,9 +21,18 @@ PENDENTE_TTL = 15 * 60  # 15 minutos
 
 # ================= PLANOS =================
 PLANOS = {
-    "vip1": {"id": "vip1", "nome": "VIP 1 Mês", "valor": 20.00, "dias": 30},
-    "vip6": {"id": "vip6", "nome": "VIP 6 Meses", "valor": 30.00, "dias": 90},
-    "vip_vitalicio": {"id": "vip_vitalicio", "nome": "VIP Vitalício", "valor": 40.00, "dias": None},
+    "vip1": {
+        "id": "vip1",
+        "nome": "VIP 1 Mês",
+        "valor": 35.00,
+        "dias": 30
+    },
+    "vip_vitalicio": {
+        "id": "vip_vitalicio",
+        "nome": "VIP Vitalício",
+        "valor": 45.00,
+        "dias": None
+    },
 }
 
 # ================= DADOS =================
@@ -63,11 +72,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     teclado = [
-        [InlineKeyboardButton("🔥 VIP 1 Mês", callback_data="plano_vip1")],
-        [InlineKeyboardButton("🔥 VIP 6 Meses", callback_data="plano_vip6")],
-        [InlineKeyboardButton("💎 VIP Vitalício", callback_data="plano_vip_vitalicio")],
+    [InlineKeyboardButton("🔥 VIP 1 Mês — R$35", callback_data="plano_vip1")],
+    [InlineKeyboardButton("💎 VIP Vitalício — R$45", callback_data="plano_vip_vitalicio")],
     ]
-
+    
     await update.message.reply_photo(
         photo=START_IMAGE_URL,
         caption=texto,
