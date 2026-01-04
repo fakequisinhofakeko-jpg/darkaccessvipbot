@@ -13,7 +13,7 @@ import time
 # ================= CONFIG =================
 BOT_TOKEN = "8444138111:AAGuhgOzBtMsrNRQ1Zj2_pKuquMXi7jcHGo"
 ADMIN_ID = 1208316553
-GROUP_ID = -1003513694224
+GROUP_ID = -1003325505558
 PIX_KEY = "d506a3da-1aab-4dd3-8655-260b48e04bfa"
 
 START_IMAGE_URL = "https://crooked-pink-lw2jbcf2ie-06nqwkliyr.edgeone.dev/0c4c705a6047a4fcb4d85b8d2f27660c.jpg"
