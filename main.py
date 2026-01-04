@@ -16,7 +16,8 @@ ADMIN_ID = 1208316553
 GROUP_ID = -1003325505558
 PIX_KEY = "d506a3da-1aab-4dd3-8655-260b48e04bfa"
 
-START_IMAGE_URL = "https://crooked-pink-lw2jbcf2ie-06nqwkliyr.edgeone.dev/0c4c705a6047a4fcb4d85b8d2f27660c.jpg"
+# 🔥 IMAGEM REAL ADULTO
+START_IMAGE_URL = "https://i.postimg.cc/X7tcHPD0/images.jpg"
 
 PENDENTE_TTL = 15 * 60  # 15 minutos
 
@@ -28,13 +29,11 @@ PLANOS = {
 }
 
 # ================= DADOS =================
-pagamentos_pendentes = {}      # uid -> {plano, created_at}
+pagamentos_pendentes = {}
 usuarios_ativos = {}
-confirmacoes_enviadas = set()
 comprovantes_recebidos = set()
 total_arrecadado = 0.0
 pagamentos_aprovados = 0
-admin_aguardando_id = set()
 
 # ================= UTIL =================
 async def verificar_expiracoes(context):
@@ -54,7 +53,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     texto = (
         "⚠️ **AVISO DE CONTEÚDO ADULTO (+18)**\n\n"
-        "🔞 Conteúdo adulto explícito do tipo Anime\n\n"
+        "🔞 Conteúdo adulto explícito\n"
+        "🔒 Área VIP privada\n\n"
         "💳 Pagamento via **PIX**\n"
         "📸 Envie o comprovante\n"
         "⚠️ Confirmações sem pagamento serão rejeitadas"
@@ -135,8 +135,6 @@ async def confirmar(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     plano = dados["plano"]
-
-    # 🔥 AQUI FOI ADICIONADO NOME + USERNAME
     user = q.from_user
     nome = user.full_name
     username = f"@{user.username}" if user.username else "(sem @)"
@@ -197,7 +195,6 @@ async def moderar(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     pagamentos_pendentes.pop(uid, None)
     comprovantes_recebidos.discard(uid)
-    confirmacoes_enviadas.discard(uid)
 
 # ================= MAIN =================
 def main():
